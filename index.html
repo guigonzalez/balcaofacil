@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f8f6" />
+    <meta
+      name="description"
+      content="Um jeito simples de cuidar das vendas, dos produtos e dos clientes da sua loja."
+    />
+    <title>Balcão — gestão da sua loja</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <a class="brand" href="#inicio" aria-label="Balcão, início">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M6.5 10.2 16 5l9.5 5.2v11.6L16 27l-9.5-5.2V10.2Z" stroke="currentColor" stroke-width="2.3" stroke-linejoin="round" />
+              <path d="M11 16.3h10M16 11.3v10" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" />
+            </svg>
+          </span>
+          <span class="brand-word">balcão<span>.</span></span>
+        </a>
+
+        <div class="store-switcher">
+          <span class="store-avatar">BV</span>
+          <span class="store-copy"><strong id="store-name">Balcão da Vila</strong><small>Plano demonstração</small></span>
+          <button class="icon-button store-menu" type="button" data-action="settings" aria-label="Configurações da loja">
+            <span aria-hidden="true">···</span>
+          </button>
+        </div>
+
+        <p class="nav-caption">MENU PRINCIPAL</p>
+        <nav class="main-nav" aria-label="Menu principal">
+          <button class="nav-link is-active" type="button" data-page="inicio">
+            <span class="nav-icon" data-icon="home"></span><span>Visão geral</span>
+          </button>
+          <button class="nav-link" type="button" data-page="pdv">
+            <span class="nav-icon" data-icon="cart"></span><span>Frente de caixa</span><span class="nav-shortcut">F2</span>
+          </button>
+          <button class="nav-link" type="button" data-page="produtos">
+            <span class="nav-icon" data-icon="box"></span><span>Produtos</span><span class="nav-count" id="low-stock-count"></span>
+          </button>
+          <button class="nav-link" type="button" data-page="vendas">
+            <span class="nav-icon" data-icon="receipt"></span><span>Vendas</span>
+          </button>
+          <button class="nav-link" type="button" data-page="clientes">
+            <span class="nav-icon" data-icon="users"></span><span>Clientes</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <div class="help-card">
+            <span class="help-sparkle" aria-hidden="true">✳</span>
+            <strong>Um bom dia começa aqui</strong>
+            <p>Seu negócio, organizado e no ritmo certo.</p>
+            <span class="help-decoration" aria-hidden="true">↗</span>
+          </div>
+          <button class="profile-button" type="button" data-action="settings">
+            <span class="profile-avatar">AM</span>
+            <span class="profile-copy"><strong>Ana Martins</strong><small>Administradora</small></span>
+            <span class="profile-dots" aria-hidden="true">···</span>
+          </button>
+        </div>
+      </aside>
+
+      <div class="mobile-scrim" id="mobile-scrim"></div>
+      <main class="main-area">
+        <header class="topbar">
+          <div class="topbar-left">
+            <button class="icon-button mobile-menu-button" id="mobile-menu" type="button" aria-label="Abrir menu">
+              <span data-icon="menu"></span>
+            </button>
+            <div class="breadcrumbs"><span>Loja</span><span class="breadcrumb-divider">/</span><strong id="current-section">Visão geral</strong></div>
+          </div>
+          <div class="topbar-right">
+            <span class="today-label" id="today-label"></span>
+            <span class="topbar-divider"></span>
+            <button class="icon-button notification-button" type="button" data-page="produtos" aria-label="Ver produtos com estoque baixo">
+              <span data-icon="bell"></span><i aria-hidden="true"></i>
+            </button>
+            <button class="topbar-avatar" type="button" data-action="settings" aria-label="Configurações de Ana Martins">AM</button>
+          </div>
+        </header>
+
+        <section class="page-content" id="page-content" aria-live="polite"></section>
+      </main>
+    </div>
+
+    <dialog class="app-dialog" id="app-dialog" aria-labelledby="dialog-title">
+      <div id="dialog-content"></div>
+    </dialog>
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>
