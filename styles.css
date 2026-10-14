@@ -238,6 +238,26 @@ td strong { color: var(--ink); font-weight: 600; }
 .receipt-row strong { color: var(--ink); }
 .receipt-success .button { width: 100%; }
 .mobile-scrim { display: none; }
+.auth-screen { display: grid; min-height: 100vh; place-items: center; padding: 24px; background: radial-gradient(ellipse at 50% 0%, #eaf3ec 0%, var(--canvas) 58%); }
+.auth-screen[hidden], .app-shell[hidden] { display: none; }
+.auth-card { width: min(420px, 100%); padding: 30px; border: 1px solid var(--line); border-radius: 16px; background: #fff; box-shadow: 0 16px 50px rgb(29 40 36 / 7%); }
+.auth-brand { margin: 0 0 30px; }
+.auth-card h1 { margin: 0; font-size: 27px; letter-spacing: -1px; }
+.auth-description { margin: 8px 0 20px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.auth-form { display: grid; gap: 10px; }
+.auth-form label { margin-top: 3px; color: #647068; font-size: 10px; font-weight: 600; }
+.auth-form input { width: 100%; min-height: 42px; padding: 0 11px; border: 1px solid #e3e9e4; border-radius: 8px; outline: 0; color: var(--ink); background: #fff; font-size: 12px; }
+.auth-form input:focus { border-color: #84b69a; box-shadow: 0 0 0 3px rgb(23 108 74 / 7%); }
+.auth-form .button { min-height: 42px; margin-top: 5px; }
+.auth-form .button-secondary { color: #56635b; }
+.auth-password-field { display: grid; gap: 10px; }
+.auth-message { margin: 0 0 14px; padding: 10px 11px; border: 1px solid #dceae0; border-radius: 8px; color: #38664c; background: #f1f7f2; font-size: 10px; line-height: 1.5; }
+.auth-link { display: block; margin: 15px auto 0; padding: 5px; border: 0; color: var(--green); background: none; cursor: pointer; font-size: 10px; font-weight: 600; }
+.auth-back { width: 100%; }
+.auth-footer { margin: 24px 0 0; color: #9aa39d; font-size: 9px; text-align: center; }
+.settings-section-title { margin: 18px 0 12px; color: #58645d; font-size: 10px; font-weight: 700; }
+.invite-form { margin-top: 15px; padding-top: 2px; border-top: 1px solid var(--line); }
+.invite-form .dialog-actions { margin-top: 12px; padding-top: 0; border-top: 0; }
 
 @media (min-width: 1450px) {
   .page-content { padding-top: 42px; }
@@ -266,6 +286,8 @@ td strong { color: var(--ink); font-weight: 600; }
   .today-label { display: none; }
   .topbar-divider { display: none; }
   .page-content { padding: 25px 16px 35px; }
+  .auth-screen { padding: 16px; }
+  .auth-card { padding: 23px 20px; }
   .page-heading { align-items: flex-start; gap: 12px; margin-bottom: 19px; }
   .page-heading h1 { font-size: 23px; }
   .page-subtitle { max-width: 280px; line-height: 1.5; }

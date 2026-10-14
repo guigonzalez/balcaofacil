@@ -20,7 +20,12 @@ function allowedOrigin(request) {
       return false;
     }
   }
-  if (process.env.VERCEL_URL && `https://${process.env.VERCEL_URL}` === origin) return true;
+  const vercelOrigins = [
+    process.env.VERCEL_URL,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    process.env.VERCEL_BRANCH_URL
+  ].filter(Boolean).map(host => `https://${host}`);
+  if (vercelOrigins.includes(origin)) return true;
   return ["http://localhost:5173", "http://127.0.0.1:5173"].includes(origin);
 }
 
@@ -37,7 +42,7 @@ export default async function handler(request, response) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !anonKey || !serviceRoleKey || !process.env.APP_URL) {
+  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
     console.error("Invite API is missing Supabase server configuration.");
     return json(response, 503, { error: "O serviço de convites ainda não está configurado." });
   }
@@ -64,7 +69,7 @@ export default async function handler(request, response) {
   });
 
   try {
-    const { data: authData, error: authError } = await userClient.auth.getUser();
+    const { data: authData, error: authError } = await userClient.auth.getUser(authorization.slice("Bearer ".length));
     if (authError || !authData.user) return json(response, 401, { error: "Sessão inválida ou expirada." });
 
     const { data: membership, error: membershipError } = await adminClient
@@ -81,9 +86,10 @@ export default async function handler(request, response) {
       return json(response, 403, { error: "Somente proprietários e administradores podem convidar pessoas." });
     }
 
-    const redirectTo = new URL("/", process.env.APP_URL).toString();
+    const inviteRedirect = new URL("/", request.headers.origin);
+    inviteRedirect.searchParams.set("flow", "invite");
     const { data: invitation, error: invitationError } = await adminClient.auth.admin.inviteUserByEmail(email, {
-      redirectTo,
+      redirectTo: inviteRedirect.toString(),
       data: { store_id: storeId, role }
     });
     if (invitationError || !invitation.user) {

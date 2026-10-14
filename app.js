@@ -1,3 +1,5 @@
+import { createCloudStore } from "./cloud-store.js";
+
 const STORAGE_KEY = "balcao-mvp-v1";
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
 const DATE = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" });
@@ -94,12 +96,23 @@ let salesFilter = "all";
 let salesPeriod = "all";
 let productFilter = "active";
 let toastTimer;
+let cloudStore = null;
+let cloudUser = null;
+let storeRole = null;
+let cloudWritePending = false;
+let authActivation = 0;
+let authNeedsPassword = false;
+let authNotice = "";
+let authMode = "signin";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const pageContent = $("#page-content");
 const dialog = $("#app-dialog");
 const dialogContent = $("#dialog-content");
+const authScreen = $("#auth-screen");
+const authContent = $("#auth-content");
+const appShell = $(".app-shell");
 
 function escapeHTML(value) {
   return String(value ?? "").replace(/[&<>"']/g, character => ({
@@ -156,6 +169,7 @@ function showToast(message, type = "success") {
 }
 
 function commit(nextState, successMessage) {
+  if (cloudStore) return commitCloudState(nextState, successMessage);
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
   } catch (error) {
@@ -170,8 +184,64 @@ function commit(nextState, successMessage) {
   return true;
 }
 
+async function commitCloudState(nextState, successMessage) {
+  if (cloudWritePending) {
+    showToast("Aguarde a operação atual terminar antes de salvar outra alteração.", "error");
+    return false;
+  }
+  cloudWritePending = true;
+  const previous = structuredClone(state);
+  state = nextState;
+  updateShell();
+  renderPage();
+  try {
+    await cloudStore.saveChanges(previous, nextState);
+    const refreshed = await cloudStore.loadForUser(cloudUser);
+    if (refreshed.needsStore) throw new Error("Sua loja não está mais associada a esta conta. Entre novamente.");
+    state = refreshed.state;
+    updateShell();
+    renderPage();
+    if (successMessage) showToast(successMessage);
+    return true;
+  } catch (error) {
+    console.error("Não foi possível salvar a alteração na loja.", error);
+    try {
+      const refreshed = await cloudStore.loadForUser(cloudUser);
+      if (!refreshed.needsStore) {
+        state = refreshed.state;
+        updateShell();
+        renderPage();
+      }
+    } catch (refreshError) {
+      console.error("Não foi possível recarregar os dados do servidor.", refreshError);
+    }
+    showToast(error.message || "Não foi possível salvar no servidor. Tente novamente.", "error");
+    return false;
+  } finally {
+    cloudWritePending = false;
+  }
+}
+
 function updateShell() {
-  $("#store-name").textContent = state.storeName;
+  if (state?.cloud) {
+    $("#store-name").textContent = state.storeName;
+    $(".store-copy small").textContent = "Loja conectada";
+    const profileName = state.user.email || "Usuário";
+    const profileInitials = initials(profileName.split("@")[0].replace(/[._-]/g, " "));
+    $(".profile-copy strong").textContent = profileName;
+    $(".profile-copy small").textContent = state.role === "owner" ? "Proprietário" : state.role === "admin" ? "Administrador" : "Atendente";
+    $(".profile-avatar").textContent = profileInitials;
+    $(".topbar-avatar").textContent = profileInitials;
+    $(".topbar-avatar").setAttribute("aria-label", `Conta ${profileName}`);
+  } else {
+    $("#store-name").textContent = state.storeName;
+    $(".store-copy small").textContent = "Plano demonstração";
+    $(".profile-copy strong").textContent = "Ana Martins";
+    $(".profile-copy small").textContent = "Administradora";
+    $(".profile-avatar").textContent = "AM";
+    $(".topbar-avatar").textContent = "AM";
+    $(".topbar-avatar").setAttribute("aria-label", "Configurações de Ana Martins");
+  }
   $("#today-label").textContent = formatLongDate();
   const lowStock = state.products.filter(product => product.active && product.stock <= product.lowStock).length;
   const badge = $("#low-stock-count");
@@ -443,7 +513,20 @@ function cancelSaleDialog(sale) {
 }
 
 function settingsDialog() {
-  openDialog("Sua loja", "Personalize a identificação da demonstração.", `<form id="settings-form"><div class="form-field"><label for="store-name-input">Nome da loja</label><input id="store-name-input" name="storeName" required maxlength="50" value="${escapeHTML(state.storeName)}"></div><p class="field-hint" style="margin-top:12px">Seus dados ficam somente neste navegador. Para reiniciar a demonstração, use o botão abaixo.</p><div class="dialog-actions" style="justify-content:space-between"><button class="button button-danger button-small" type="button" data-action="reset-demo">Restaurar demonstração</button><span style="display:flex;gap:8px"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button><button class="button button-primary" type="submit">Salvar</button></span></div></form>`);
+  const cloudMode = Boolean(state.cloud);
+  const inviteForm = cloudMode && ["owner", "admin"].includes(state.role)
+    ? `<form id="invite-form" class="invite-form"><p class="settings-section-title">Convidar alguém para a equipe</p><div class="form-grid"><div class="form-field"><label for="invite-email">E-mail *</label><input id="invite-email" name="email" required type="email" maxlength="254" placeholder="pessoa@email.com"></div><div class="form-field"><label for="invite-role">Acesso *</label><select id="invite-role" name="role"><option value="attendant">Atendente</option><option value="admin">Administrador</option></select></div></div><div class="dialog-actions"><button class="button button-primary" type="submit">Enviar convite</button></div></form>`
+    : "";
+  const resetButton = cloudMode ? "" : `<button class="button button-danger button-small" type="button" data-action="reset-demo">Restaurar demonstração</button>`;
+  const storeNameControl = state.role === "attendant"
+    ? `<div class="form-field"><label>Nome da loja</label><input value="${escapeHTML(state.storeName)}" disabled></div>`
+    : `<div class="form-field"><label for="store-name-input">Nome da loja</label><input id="store-name-input" name="storeName" required maxlength="80" value="${escapeHTML(state.storeName)}"></div>`;
+  const description = cloudMode
+    ? `${cloudUser?.email ?? ""} · ${state.role === "owner" ? "proprietário" : state.role === "admin" ? "administrador" : "atendente"}`
+    : "Personalize a identificação da demonstração.";
+  const descriptionNode = `<p>${escapeHTML(description)}</p>`;
+  openDialog("Sua loja", "", `<form id="settings-form">${storeNameControl}${cloudMode ? "" : `<p class="field-hint" style="margin-top:12px">Seus dados ficam somente neste navegador. Para reiniciar a demonstração, use o botão abaixo.</p>`}<div class="dialog-actions" style="justify-content:space-between">${resetButton}<span style="display:flex;gap:8px"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button>${state.role === "attendant" ? "" : `<button class="button button-primary" type="submit">Salvar</button>`}</span></div></form>${inviteForm}<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="sign-out">Sair da conta</button></div>`);
+  $(".dialog-head p", dialogContent).textContent = descriptionNode.replace(/<[^>]+>/g, "");
 }
 
 function confirmResetDemo() {
@@ -470,7 +553,7 @@ function changeCartQuantity(productId, delta) {
   renderPOS();
 }
 
-function completeSale(form) {
+async function completeSale(form) {
   const data = new FormData(form);
   const payment = String(data.get("payment") || "");
   const current = structuredClone(state);
@@ -498,13 +581,13 @@ function completeSale(form) {
   };
   current.nextSale += 1;
   current.sales.push(sale);
-  if (!commit(current)) return;
+  if (!await commit(current)) return;
   cart = [];
   selectedCustomer = "";
-  receiptDialog(sale);
+  receiptDialog(state.sales.find(item => item.databaseId === sale.databaseId) ?? sale);
 }
 
-function handleProductSubmit(form) {
+async function handleProductSubmit(form) {
   const data = new FormData(form);
   const id = String(data.get("id") || "");
   const name = String(data.get("name") || "").trim();
@@ -527,14 +610,14 @@ function handleProductSubmit(form) {
     if (!product) return showToast("Não foi possível localizar o produto para editar.", "error");
     Object.assign(product, { name, sku, category, price, cost, lowStock });
   } else {
-    const productId = `p-${crypto.randomUUID()}`;
+    const productId = crypto.randomUUID();
     current.products.push({ id: productId, name, sku, category, price, cost, stock, lowStock, active: true });
     if (stock > 0) current.movements.push({ id: crypto.randomUUID(), productId, date: new Date().toISOString(), delta: stock, kind: "entry", reason: "Estoque inicial" });
   }
-  if (commit(current, id ? "Produto atualizado." : "Produto cadastrado.")) closeDialog();
+  if (await commit(current, id ? "Produto atualizado." : "Produto cadastrado.")) closeDialog();
 }
 
-function handleCustomerSubmit(form) {
+async function handleCustomerSubmit(form) {
   const data = new FormData(form);
   const id = String(data.get("id") || "");
   const name = String(data.get("name") || "").trim();
@@ -547,12 +630,12 @@ function handleCustomerSubmit(form) {
     if (!customer) return showToast("Não foi possível localizar o cliente para editar.", "error");
     Object.assign(customer, { name, phone, email });
   } else {
-    current.customers.push({ id: `c-${crypto.randomUUID()}`, name, phone, email, createdAt: new Date().toISOString() });
+    current.customers.push({ id: crypto.randomUUID(), name, phone, email, createdAt: new Date().toISOString() });
   }
-  if (commit(current, id ? "Cadastro do cliente atualizado." : "Cliente cadastrado.")) closeDialog();
+  if (await commit(current, id ? "Cadastro do cliente atualizado." : "Cliente cadastrado.")) closeDialog();
 }
 
-function handleStockSubmit(form) {
+async function handleStockSubmit(form) {
   const data = new FormData(form);
   const productId = String(data.get("productId") || "");
   const kind = String(data.get("kind") || "");
@@ -563,12 +646,13 @@ function handleStockSubmit(form) {
   const product = current.products.find(item => item.id === productId && item.active);
   if (!product) return showToast("Não foi possível localizar o produto selecionado.", "error");
   const delta = kind === "entry" ? quantity : quantity - product.stock;
+  if (delta === 0) return showToast("A quantidade informada é igual ao estoque atual.", "error");
   product.stock = kind === "entry" ? product.stock + quantity : quantity;
   current.movements.push({ id: crypto.randomUUID(), productId, date: new Date().toISOString(), delta, kind, reason });
-  if (commit(current, `Estoque de ${product.name} atualizado.`)) closeDialog();
+  if (await commit(current, `Estoque de ${product.name} atualizado.`)) closeDialog();
 }
 
-function handleCancelSale(form) {
+async function handleCancelSale(form) {
   const data = new FormData(form);
   const saleId = String(data.get("id") || "");
   const reason = String(data.get("reason") || "").trim();
@@ -584,7 +668,7 @@ function handleCancelSale(form) {
     if (product) product.stock += line.quantity;
     current.movements.push({ id: crypto.randomUUID(), productId: line.productId, date: sale.cancelledAt, delta: line.quantity, kind: "sale-return", reason: `Cancelamento ${sale.id}` });
   });
-  if (commit(current, `Venda ${saleId} cancelada e estoque devolvido.`)) closeDialog();
+  if (await commit(current, `Venda ${saleId} cancelada e estoque devolvido.`)) closeDialog();
 }
 
 function showCustomerHistory(customerId) {
@@ -593,6 +677,183 @@ function showCustomerHistory(customerId) {
   const sales = state.sales.filter(sale => sale.customerId === customerId).sort((a, b) => new Date(b.date) - new Date(a.date));
   const table = sales.length ? `<div class="table-wrap"><table><thead><tr><th>VENDA</th><th>DATA</th><th>VALOR</th><th>STATUS</th></tr></thead><tbody>${sales.map(sale => `<tr><td><strong>${escapeHTML(sale.id)}</strong></td><td>${escapeHTML(formatDate(sale.date, true))}</td><td>${money(sale.total)}</td><td><span class="status-pill${sale.status === "cancelled" ? " cancelled" : ""}">${sale.status === "completed" ? "Concluída" : "Cancelada"}</span></td></tr>`).join("")}</tbody></table></div>` : `<div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Sem compras registradas</strong><p>As próximas vendas associadas aparecerão aqui.</p></div></div>`;
   openDialog(customer.name, `${customer.phone || "Sem telefone"} · histórico de compras`, `${table}<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button><button class="button button-primary" type="button" data-action="edit-customer" data-id="${escapeHTML(customer.id)}">Editar cliente</button></div>`);
+}
+
+function showAuth(mode = "signin", message = "") {
+  authMode = mode;
+  authNotice = message;
+  appShell.hidden = true;
+  authScreen.hidden = false;
+  const notice = message ? `<div class="auth-message" role="status">${escapeHTML(message)}</div>` : "";
+  if (mode === "configuration") {
+    authContent.innerHTML = `<p class="eyebrow">CONFIGURAÇÃO NECESSÁRIA</p><h1>Banco ainda não conectado</h1><p class="auth-description">A publicação está no servidor, mas não encontrou as chaves públicas do Supabase durante o build. Para proteger os dados, o modo demonstração fica desativado em produção.</p>${notice}<button class="button button-secondary auth-back" type="button" onclick="location.reload()">Tentar novamente</button>`;
+    return;
+  }
+  if (mode === "setup") {
+    authContent.innerHTML = `<p class="eyebrow">PRIMEIRO ACESSO</p><h1>Crie sua loja</h1><p class="auth-description">Esta conta será a proprietária. Depois, você poderá convidar sua equipe.</p>${notice}<form id="setup-store-form" class="auth-form"><label for="setup-store-name">Nome da loja</label><input id="setup-store-name" name="name" required maxlength="80" autocomplete="organization" placeholder="Ex.: Minha loja"><button class="button button-primary" type="submit">Criar minha loja</button></form><button class="auth-link" type="button" data-action="sign-out">Sair</button>`;
+    return;
+  }
+  if (mode === "password") {
+    authContent.innerHTML = `<p class="eyebrow">PROTEJA SUA CONTA</p><h1>Defina sua senha</h1><p class="auth-description">Crie uma senha para concluir o acesso à loja.</p>${notice}<form id="set-password-form" class="auth-form"><label for="new-password">Nova senha</label><input id="new-password" name="password" required type="password" minlength="10" autocomplete="new-password" placeholder="Pelo menos 10 caracteres"><label for="confirm-password">Confirme a senha</label><input id="confirm-password" name="confirmation" required type="password" minlength="10" autocomplete="new-password" placeholder="Digite a senha novamente"><button class="button button-primary" type="submit">Salvar senha e continuar</button></form><button class="auth-link" type="button" data-action="sign-out">Sair</button>`;
+    return;
+  }
+  if (mode === "check-email") {
+    authContent.innerHTML = `<p class="eyebrow">CONFIRA SEU E-MAIL</p><h1>Seu link está a caminho</h1><p class="auth-description">${notice}</p><button class="button button-secondary auth-back" type="button" data-auth-mode="signin">Voltar ao acesso</button>`;
+    return;
+  }
+  if (mode === "reset-sent") {
+    authContent.innerHTML = `<p class="eyebrow">RECUPERAÇÃO DE ACESSO</p><h1>Confira sua caixa de entrada</h1><p class="auth-description">${notice}</p><button class="button button-secondary auth-back" type="button" data-auth-mode="signin">Voltar ao acesso</button>`;
+    return;
+  }
+  const reset = mode === "reset";
+  authContent.innerHTML = `<p class="eyebrow">${reset ? "RECUPERAÇÃO DE ACESSO" : "BEM-VINDA À SUA LOJA"}</p><h1>${reset ? "Redefina sua senha" : "Entre no Balcão"}</h1><p class="auth-description">${reset ? "Enviaremos um link seguro para redefinir sua senha." : "Acesse sua loja com o convite que recebeu por e-mail."}</p>${notice}<form id="${reset ? "reset-password-form" : "signin-form"}" class="auth-form"><label for="auth-email">E-mail</label><input id="auth-email" name="email" required type="email" autocomplete="email" maxlength="254" placeholder="voce@email.com"><span class="auth-password-field"${reset ? ' hidden' : ""}><label for="auth-password">Senha</label><input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="10" placeholder="Sua senha"></span><button class="button button-primary" type="submit">${reset ? "Enviar link de recuperação" : "Entrar"}</button>${reset ? "" : `<button class="button button-secondary" type="button" data-action="send-magic-link">Receber link de acesso por e-mail</button>`}</form>${reset ? `<button class="auth-link" type="button" data-auth-mode="signin">Voltar ao acesso</button>` : `<button class="auth-link" type="button" data-auth-mode="reset">Esqueci minha senha</button>`}`;
+}
+
+async function activateCloudUser(user) {
+  const activation = ++authActivation;
+  cloudUser = user;
+  if (authNeedsPassword) {
+    showAuth("password");
+    return;
+  }
+  showAuth("signin", "Carregando os dados da sua loja…");
+  try {
+    const result = await cloudStore.loadForUser(user);
+    if (activation !== authActivation) return;
+    if (result.needsStore) {
+      showAuth("setup");
+      return;
+    }
+    state = result.state;
+    storeRole = result.state.role;
+    updateShell();
+    authScreen.hidden = true;
+    appShell.hidden = false;
+    renderPage();
+  } catch (error) {
+    if (activation !== authActivation) return;
+    console.error("Não foi possível carregar a loja do usuário.", error);
+    showAuth("signin", error.message || "Não foi possível carregar a loja. Tente novamente.");
+  }
+}
+
+async function handleAuthSubmit(form) {
+  const data = new FormData(form);
+  if (form.id === "signin-form") {
+    const email = String(data.get("email") || "").trim().toLowerCase();
+    const password = String(data.get("password") || "");
+    if (!password) return showAuth("signin", "Informe sua senha ou use o link de acesso por e-mail.");
+    showAuth("signin", "Verificando seu acesso…");
+    const { data: result, error } = await cloudStore.client.auth.signInWithPassword({ email, password });
+    if (error) return showAuth("signin", "Não foi possível entrar. Confira o e-mail e a senha ou solicite um link de acesso.");
+    await activateCloudUser(result.user);
+  } else if (form.id === "setup-store-form") {
+    const name = String(data.get("name") || "").trim();
+    if (!name || name.length > 80) return showAuth("setup", "O nome da loja deve conter entre 1 e 80 caracteres.");
+    showAuth("setup", "Criando sua loja…");
+    try {
+      state = await cloudStore.createStore(name, cloudUser);
+      storeRole = state.role;
+      authScreen.hidden = true;
+      appShell.hidden = false;
+      updateShell();
+      renderPage();
+    } catch (error) {
+      console.error("Não foi possível criar a loja inicial.", error);
+      showAuth("setup", error.message || "Não foi possível criar a loja. Tente novamente.");
+    }
+  } else if (form.id === "set-password-form") {
+    const password = String(data.get("password") || "");
+    const confirmation = String(data.get("confirmation") || "");
+    if (password.length < 10) return showAuth("password", "Escolha uma senha com pelo menos 10 caracteres.");
+    if (password !== confirmation) return showAuth("password", "As senhas não são iguais.");
+    const { error } = await cloudStore.client.auth.updateUser({ password });
+    if (error) return showAuth("password", "Não foi possível salvar a senha. Solicite um novo link de acesso.");
+    authNeedsPassword = false;
+    window.history.replaceState({}, document.title, window.location.pathname);
+    const { data: result } = await cloudStore.client.auth.getUser();
+    if (result.user) await activateCloudUser(result.user);
+  } else if (form.id === "reset-password-form") {
+    const email = String(data.get("email") || "").trim().toLowerCase();
+    const resetRedirect = new URL("/", window.location.origin);
+    resetRedirect.searchParams.set("flow", "recovery");
+    const { error } = await cloudStore.client.auth.resetPasswordForEmail(email, { redirectTo: resetRedirect.toString() });
+    if (error) return showAuth("reset", "Não foi possível enviar o link agora. Confira o e-mail e tente novamente.");
+    showAuth("reset-sent", "Se esse endereço pertence a uma conta convidada, você receberá instruções de recuperação.");
+  }
+}
+
+async function sendMagicLink() {
+  const email = String($("#auth-email")?.value || "").trim().toLowerCase();
+  if (!email) return showAuth("signin", "Informe seu e-mail para receber o link de acesso.");
+  const { error } = await cloudStore.client.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: false, emailRedirectTo: window.location.origin }
+  });
+  if (error) return showAuth("signin", "Não foi possível enviar o link. Confirme que o e-mail foi convidado para a loja e tente novamente.");
+  showAuth("check-email", `Enviamos um link de acesso para ${email}. O cadastro público está desativado; o endereço precisa ter sido convidado para a loja.`);
+}
+
+async function inviteTeamMember(form) {
+  const data = new FormData(form);
+  const email = String(data.get("email") || "").trim().toLowerCase();
+  const role = String(data.get("role") || "");
+  const { data: sessionResult, error: sessionError } = await cloudStore.client.auth.getSession();
+  if (sessionError || !sessionResult.session) return showToast("Sua sessão expirou. Entre novamente para convidar pessoas.", "error");
+  const button = $('button[type="submit"]', form);
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/invite", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${sessionResult.session.access_token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ email, role, store_id: state.storeId })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Não foi possível enviar o convite.");
+    closeDialog();
+    showToast(`Convite enviado para ${email}.`);
+  } catch (error) {
+    console.error("Não foi possível enviar o convite da equipe.", error);
+    showToast(error.message || "Falha ao enviar o convite.", "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function startCloudApp(url, anonKey) {
+  cloudStore = createCloudStore(url, anonKey);
+  authScreen.hidden = false;
+  appShell.hidden = true;
+  const hash = new URLSearchParams(window.location.hash.slice(1));
+  const flow = new URLSearchParams(window.location.search).get("flow");
+  authNeedsPassword = flow === "invite" || flow === "recovery" || ["invite", "recovery"].includes(hash.get("type"));
+  cloudStore.client.auth.onAuthStateChange((event, session) => {
+    if (event === "PASSWORD_RECOVERY") authNeedsPassword = true;
+    if (event === "SIGNED_OUT") {
+      authActivation += 1;
+      state = null;
+      cloudUser = null;
+      storeRole = null;
+      showAuth("signin", "Você saiu da sua conta.");
+    } else if (session && ["SIGNED_IN", "INITIAL_SESSION", "TOKEN_REFRESHED", "PASSWORD_RECOVERY", "USER_UPDATED"].includes(event)) {
+      if (event === "TOKEN_REFRESHED" && state?.cloud) return;
+      queueMicrotask(() => activateCloudUser(session.user));
+    }
+  });
+  cloudStore.client.auth.getSession().then(({ data, error }) => {
+    if (error) {
+      console.error("Não foi possível verificar a sessão do usuário.", error);
+      return showAuth("signin", "Não foi possível verificar sua sessão. Tente novamente.");
+    }
+    if (data.session) activateCloudUser(data.session.user);
+    else showAuth("signin");
+  }).catch(error => {
+    console.error("Não foi possível iniciar a sessão segura.", error);
+    showAuth("signin", "Não foi possível conectar ao serviço de autenticação.");
+  });
 }
 
 function resetDemo() {
@@ -616,7 +877,7 @@ function resetDemo() {
   }
 }
 
-document.addEventListener("click", event => {
+document.addEventListener("click", async event => {
   const pageButton = event.target.closest("[data-page]");
   if (pageButton) {
     navigate(pageButton.dataset.page);
@@ -647,7 +908,7 @@ document.addEventListener("click", event => {
     const product = current.products.find(item => item.id === id);
     if (!product) return showToast("Produto não encontrado.", "error");
     product.active = !product.active;
-    commit(current, product.active ? "Produto ativado." : "Produto arquivado.");
+    await commit(current, product.active ? "Produto ativado." : "Produto arquivado.");
   } else if (action === "adjust-stock") adjustStockDialog(state.products.find(product => product.id === id));
   else if (action === "adjust-stock-list") adjustStockDialog();
   else if (action === "add-customer") customerForm();
@@ -662,23 +923,55 @@ document.addEventListener("click", event => {
     if (sale) cancelSaleDialog(sale);
   }   else if (action === "reset-demo") confirmResetDemo();
   else if (action === "confirm-reset-demo") resetDemo();
+  else if (action === "sign-out") {
+    if (cloudStore) {
+      try {
+        const { error } = await cloudStore.client.auth.signOut();
+        if (error) showToast("Não foi possível encerrar a sessão. Tente novamente.", "error");
+      } catch (error) {
+        console.error("Não foi possível encerrar a sessão.", error);
+        showToast("Não foi possível encerrar a sessão. Tente novamente.", "error");
+      }
+    } else closeDialog();
+  } else if (action === "send-magic-link") {
+    try {
+      await sendMagicLink();
+    } catch (error) {
+      console.error("Não foi possível enviar o link de acesso.", error);
+      showAuth("signin", "Não foi possível enviar o link. Confira o SMTP e o e-mail convidado.");
+    }
+  }
 });
 
-document.addEventListener("submit", event => {
+document.addEventListener("submit", async event => {
   event.preventDefault();
   const formId = event.target.getAttribute("id");
-  if (formId === "product-form") handleProductSubmit(event.target);
-  else if (formId === "customer-form") handleCustomerSubmit(event.target);
-  else if (formId === "stock-form") handleStockSubmit(event.target);
-  else if (formId === "checkout-form") completeSale(event.target);
-  else if (formId === "cancel-sale-form") handleCancelSale(event.target);
+  if (formId === "signin-form" || formId === "setup-store-form" || formId === "set-password-form" || formId === "reset-password-form") {
+    try {
+      await handleAuthSubmit(event.target);
+    } catch (error) {
+      console.error("A solicitação de autenticação falhou.", error);
+      showAuth(authMode, "Não foi possível concluir a solicitação. Verifique a conexão e tente novamente.");
+    }
+  } else if (formId === "invite-form") {
+    await inviteTeamMember(event.target);
+  } else if (formId === "product-form") await handleProductSubmit(event.target);
+  else if (formId === "customer-form") await handleCustomerSubmit(event.target);
+  else if (formId === "stock-form") await handleStockSubmit(event.target);
+  else if (formId === "checkout-form") await completeSale(event.target);
+  else if (formId === "cancel-sale-form") await handleCancelSale(event.target);
   else if (formId === "settings-form") {
     const name = String(new FormData(event.target).get("storeName") || "").trim();
     if (!name) return showToast("Informe o nome da loja.", "error");
     const current = structuredClone(state);
     current.storeName = name;
-    if (commit(current, "Nome da loja atualizado.")) closeDialog();
+    if (await commit(current, "Nome da loja atualizado.")) closeDialog();
   }
+});
+
+document.addEventListener("click", event => {
+  const modeButton = event.target.closest("[data-auth-mode]");
+  if (modeButton) showAuth(modeButton.dataset.authMode);
 });
 
 document.addEventListener("input", event => {
@@ -736,11 +1029,20 @@ document.addEventListener("keydown", event => {
   } else if (event.key === "Escape") closeMobileMenu();
 });
 
-try {
-  state = loadState();
-  updateShell();
-  renderPage();
-} catch (error) {
-  console.error("Falha ao carregar os dados do Balcão.", error);
-  pageContent.innerHTML = `<section class="panel"><div class="empty-state"><div><span class="empty-symbol">!</span><strong>Não foi possível abrir os dados desta loja</strong><p>${escapeHTML(error.message)} Não removemos nem substituímos os dados salvos.</p><button class="button button-secondary" style="margin-top:15px" type="button" onclick="location.reload()">Tentar novamente</button></div></div></section>`;
+const hasSupabaseConfig = typeof __SUPABASE_URL__ !== "undefined" && Boolean(__SUPABASE_URL__) && typeof __SUPABASE_ANON_KEY__ !== "undefined" && Boolean(__SUPABASE_ANON_KEY__);
+if (hasSupabaseConfig) {
+  startCloudApp(__SUPABASE_URL__, __SUPABASE_ANON_KEY__);
+} else if (typeof __APP_PRODUCTION__ !== "undefined" && __APP_PRODUCTION__) {
+  showAuth("configuration");
+} else {
+  try {
+    state = loadState();
+    updateShell();
+    renderPage();
+    authScreen.hidden = true;
+    appShell.hidden = false;
+  } catch (error) {
+    console.error("Falha ao carregar os dados do Balcão.", error);
+    pageContent.innerHTML = `<section class="panel"><div class="empty-state"><div><span class="empty-symbol">!</span><strong>Não foi possível abrir os dados desta loja</strong><p>${escapeHTML(error.message)} Não removemos nem substituímos os dados salvos.</p><button class="button button-secondary" style="margin-top:15px" type="button" onclick="location.reload()">Tentar novamente</button></div></div></section>`;
+  }
 }
