@@ -111,6 +111,8 @@ function loadState() {
 
 let state;
 let currentPage = "inicio";
+let cashierMode = false;
+let cashierReturnState = null;
 let cart = [];
 let selectedCustomer = "";
 let posCategory = "Todos";
@@ -320,6 +322,10 @@ function updateShell() {
     const key = element.dataset.icon;
     if (icons[key]) element.innerHTML = icons[key];
   });
+  const cashierFab = $(".cashier-fab");
+  cashierFab.setAttribute("aria-label", cashierMode ? "Voltar à tela anterior" : "Ativar Modo Caixa");
+  cashierFab.title = cashierMode ? "Voltar à tela anterior" : "Ativar Modo Caixa";
+  $("#cashier-fab-label").textContent = cashierMode ? "Voltar à tela anterior" : "Modo Caixa";
   $("#cashflow-nav").hidden = !canManageCashFlow();
 }
 
@@ -603,7 +609,7 @@ function renderPOS() {
     return `<button class="pos-product-card" type="button" data-action="add-to-cart" data-id="${escapeHTML(product.id)}" ${product.stock <= 0 ? "disabled" : ""}>${productImageSource(product) ? productThumbMarkup(product, "pos-product-visual product-photo", color) : `<span class="pos-product-visual ${color}"><span aria-hidden="true">${emoji}</span></span>`}<span class="pos-product-name">${escapeHTML(product.name)}</span><span class="pos-product-bottom"><span class="pos-product-price">${money(product.price)}</span><span class="pos-product-stock">${product.stock > 0 ? `${product.stock} un.` : "Esgotado"}</span></span></button>`;
   }).join("");
   const customerOptions = state.customers.map(customer => `<option value="${escapeHTML(customer.id)}"${selectedCustomer === customer.id ? " selected" : ""}>${escapeHTML(customer.name)}</option>`).join("");
-  pageContent.innerHTML = `${pageHeading("VENDA PRESENCIAL", "Frente de caixa", "Toque em um produto para adicioná-lo à venda.", "")}
+  pageContent.innerHTML = `${pageHeading(cashierMode ? "MODO CAIXA" : "VENDA PRESENCIAL", "Frente de caixa", cashierMode ? "Tela focada em vendas · pressione Esc para voltar." : "Toque em um produto para adicioná-lo à venda.", "")}
     <div class="pos-layout"><div class="pos-main"><div class="pos-toolbar"><label class="search-box">${iconMarkup("search")}<input id="pos-search" type="search" placeholder="Buscar um produto..." value="${escapeHTML(productQuery)}" aria-label="Buscar produto para venda"></label><div class="category-list" role="group" aria-label="Filtrar categoria">${posCategories.map(category => `<button class="category-chip${posCategory === category ? " is-selected" : ""}" type="button" data-category="${escapeHTML(category)}">${escapeHTML(category)}</button>`).join("")}</div></div>
       <div class="pos-product-grid">${productCards || `<div class="empty-state"><div><span class="empty-symbol">⌕</span><strong>Nenhum produto disponível</strong><p>Cadastre um produto ou ajuste os filtros.</p></div></div>`}</div></div>
     <section class="panel cart-panel"><div class="panel-header"><div class="cart-heading"><h2 class="panel-title">Venda atual</h2><span class="cart-badge">${cartCount}</span></div><button class="table-action danger" type="button" data-action="clear-cart" ${cart.length ? "" : "disabled"}>Limpar</button></div>
@@ -614,8 +620,9 @@ function renderPOS() {
 
 function renderPage() {
   if (!state) return;
+  appShell.classList.toggle("cashier-mode", cashierMode);
   updateShell();
-  if (currentPage === "pdv") renderPOS();
+  if (cashierMode || currentPage === "pdv") renderPOS();
   else if (currentPage === "produtos") renderProducts();
   else if (currentPage === "vendas") renderSales();
   else if (currentPage === "caixa" && canManageCashFlow()) renderCashFlow();
@@ -628,10 +635,81 @@ function navigate(page) {
   if (!["inicio", "pdv", "produtos", "vendas", "caixa", "analises", "clientes"].includes(page)) return;
   if (page === "caixa" && !canManageCashFlow()) return;
   currentPage = page;
-  if (page !== "pdv") productQuery = "";
+  if (page !== "pdv") {
+    cashierMode = false;
+    cashierReturnState = null;
+    productQuery = "";
+  }
   renderPage();
   closeMobileMenu();
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function captureCashierReturnState() {
+  const controls = [...pageContent.querySelectorAll("input, select, textarea")].map(control => ({
+    tagName: control.tagName,
+    type: control.type,
+    value: control.type === "file" ? undefined : control.value,
+    checked: "checked" in control ? control.checked : undefined,
+    selectedIndex: control instanceof HTMLSelectElement ? control.selectedIndex : undefined,
+    selectionStart: "selectionStart" in control ? control.selectionStart : undefined,
+    selectionEnd: "selectionEnd" in control ? control.selectionEnd : undefined
+  }));
+  const scrollPositions = [...pageContent.querySelectorAll("*")].map(element => ({
+    top: element.scrollTop,
+    left: element.scrollLeft
+  }));
+  return {
+    controls,
+    scrollPositions,
+    windowScrollY: window.scrollY,
+    focusedControlIndex: [...pageContent.querySelectorAll("input, select, textarea")].indexOf(document.activeElement)
+  };
+}
+
+function restoreCashierReturnState(snapshot) {
+  const controls = [...pageContent.querySelectorAll("input, select, textarea")];
+  snapshot.controls.forEach((saved, index) => {
+    const control = controls[index];
+    if (!control || control.tagName !== saved.tagName || control.type !== saved.type) return;
+    if (saved.value !== undefined) control.value = saved.value;
+    if (saved.checked !== undefined) control.checked = saved.checked;
+    if (saved.selectedIndex !== undefined) control.selectedIndex = saved.selectedIndex;
+  });
+  [...pageContent.querySelectorAll("*")].forEach((element, index) => {
+    const saved = snapshot.scrollPositions[index];
+    if (!saved) return;
+    element.scrollTop = saved.top;
+    element.scrollLeft = saved.left;
+  });
+  const focusedControl = controls[snapshot.focusedControlIndex];
+  if (focusedControl && focusedControl.type !== "file") {
+    focusedControl.focus({ preventScroll: true });
+    if (["text", "search", "email", "tel", "url", "password"].includes(focusedControl.type)
+      && snapshot.controls[snapshot.focusedControlIndex].selectionStart !== undefined) {
+      focusedControl.setSelectionRange(
+        snapshot.controls[snapshot.focusedControlIndex].selectionStart,
+        snapshot.controls[snapshot.focusedControlIndex].selectionEnd
+      );
+    }
+  }
+  window.scrollTo({ top: snapshot.windowScrollY });
+}
+
+function toggleCashierMode() {
+  if (cashierMode) {
+    cashierMode = false;
+    const returnState = cashierReturnState;
+    cashierReturnState = null;
+    renderPage();
+    if (returnState) restoreCashierReturnState(returnState);
+    return;
+  }
+  if (dialog.open) return;
+  cashierReturnState = captureCashierReturnState();
+  cashierMode = true;
+  renderPage();
+  $("#pos-search")?.focus();
 }
 
 function closeMobileMenu() {
@@ -1470,6 +1548,7 @@ document.addEventListener("click", async event => {
   if (action === "close-dialog") closeDialog();
   else if (action === "receipt-done") { closeDialog(); navigate("vendas"); }
   else if (action === "settings") settingsDialog();
+  else if (action === "toggle-cashier-mode") toggleCashierMode();
   else if (action === "delete-store" && state?.role === "owner") dataDeletionDialog("delete-store");
   else if (action === "delete-account" && state?.cloud) dataDeletionDialog("delete-account");
   else if (action === "add-cash-entry" && canManageCashFlow()) cashEntryDialog();
@@ -1698,8 +1777,16 @@ dialog.addEventListener("click", event => {
 document.addEventListener("keydown", event => {
   if (event.key === "F2") {
     event.preventDefault();
-    navigate("pdv");
-  } else if (event.key === "Escape") closeMobileMenu();
+    if (cashierMode) $("#pos-search")?.focus();
+    else navigate("pdv");
+  } else if (event.key === "Escape" && !dialog.open) {
+    if (cashierMode) {
+      event.preventDefault();
+      toggleCashierMode();
+    } else {
+      closeMobileMenu();
+    }
+  }
 });
 
 const hasSupabaseConfig = typeof __SUPABASE_URL__ !== "undefined" && Boolean(__SUPABASE_URL__) && typeof __SUPABASE_ANON_KEY__ !== "undefined" && Boolean(__SUPABASE_ANON_KEY__);

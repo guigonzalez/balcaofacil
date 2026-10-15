@@ -53,6 +53,8 @@ Em **Configurações da loja**, administradores podem editar os percentuais méd
 
 Em **Fluxo de caixa**, proprietários e administradores registram manualmente contas a pagar e receber, com descrição, pessoa/empresa, categoria, valor, vencimento e forma de pagamento opcional. É possível filtrar lançamentos, dar baixa integral e apagar contas ainda em aberto. A visão geral resume valores em aberto, vencidos, saldo projetado das contas não quitadas e movimentação quitada no mês; não é integração bancária nem saldo bancário real.
 
+O botão flutuante **Modo Caixa** fica disponível em todas as páginas. Ao ativá-lo, a navegação é ocultada e a interface passa a focar nas vendas; ao voltar pelo botão ou pela tecla Esc, a página anterior, seus filtros, campos e posição de rolagem são restaurados.
+
 Em **Configurações da loja**, o proprietário pode apagar permanentemente a loja e todos os dados, confirmando o nome exato; os logins dos demais membros são preservados, mas perdem acesso à loja. Cada membro também pode apagar a própria conta confirmando o e-mail. Se houver outras pessoas, a propriedade passa ao administrador mais antigo ou, na falta deles, ao atendente mais antigo; se o proprietário for o único membro, a loja e seus dados também são apagados. A exclusão é irreversível.
 
 O cadastro de produto aceita uma foto JPG, PNG ou WebP de até 5 MB. No Supabase, as imagens são guardadas no bucket público `product-images`, com upload e alteração de arquivos restritos a membros da loja; a URL da imagem pode ser acessada publicamente. Na demonstração local, a imagem é reduzida antes de ser salva no armazenamento do navegador.
