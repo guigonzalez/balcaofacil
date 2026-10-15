@@ -109,7 +109,12 @@ export function createCloudStore(url, anonKey) {
       storeId: store.id,
       storeName: store.name,
       role: membership.role,
-      user: { id: user.id, email: user.email ?? "" },
+      user: {
+        id: user.id,
+        email: user.email ?? "",
+        name: [user.user_metadata?.full_name, user.user_metadata?.name, user.user_metadata?.display_name]
+          .find(value => typeof value === "string" && value.trim())?.trim() ?? ""
+      },
       products: products.map(mapProduct),
       customers: customers.map(mapCustomer),
       sales: mappedSales,

@@ -223,11 +223,12 @@ async function commitCloudState(nextState, successMessage) {
 }
 
 function updateShell() {
+  $(".store-avatar").textContent = initials(state.storeName) || "L";
   if (state?.cloud) {
     $("#store-name").textContent = state.storeName;
     $(".store-copy small").textContent = "Loja conectada";
-    const profileName = state.user.email || "Usuário";
-    const profileInitials = initials(profileName.split("@")[0].replace(/[._-]/g, " "));
+    const profileName = state.user.name || state.user.email || "Usuário";
+    const profileInitials = initials(state.user.name || profileName.split("@")[0].replace(/[._-]/g, " "));
     $(".profile-copy strong").textContent = profileName;
     $(".profile-copy small").textContent = state.role === "owner" ? "Proprietário" : state.role === "admin" ? "Administrador" : "Atendente";
     $(".profile-avatar").textContent = profileInitials;
@@ -236,11 +237,11 @@ function updateShell() {
   } else {
     $("#store-name").textContent = state.storeName;
     $(".store-copy small").textContent = "Plano demonstração";
-    $(".profile-copy strong").textContent = "Ana Martins";
-    $(".profile-copy small").textContent = "Administradora";
-    $(".profile-avatar").textContent = "AM";
-    $(".topbar-avatar").textContent = "AM";
-    $(".topbar-avatar").setAttribute("aria-label", "Configurações de Ana Martins");
+    $(".profile-copy strong").textContent = "Conta de demonstração";
+    $(".profile-copy small").textContent = "Exemplo local";
+    $(".profile-avatar").textContent = "DE";
+    $(".topbar-avatar").textContent = "DE";
+    $(".topbar-avatar").setAttribute("aria-label", "Configurações da demonstração");
   }
   $("#today-label").textContent = formatLongDate();
   const lowStock = state.products.filter(product => product.active && product.stock <= product.lowStock).length;
@@ -332,7 +333,8 @@ function renderDashboard() {
   state.sales.filter(sale => sale.status === "completed").forEach(sale => sale.items.forEach(item => topItems.set(item.name, (topItems.get(item.name) ?? 0) + item.quantity)));
   const topItem = [...topItems.entries()].sort((a, b) => b[1] - a[1])[0];
   const action = `<button class="button button-primary" type="button" data-page="pdv"><span class="button-icon">＋</span> Nova venda</button>`;
-  pageContent.innerHTML = `${pageHeading(`${weekday} · SUA LOJA EM FOCO`, `${greeting}, Ana 👋`, "Aqui está o resumo do que está acontecendo na sua loja hoje.", action)}
+  const firstName = state.user?.name?.trim().split(/\s+/)[0];
+  pageContent.innerHTML = `${pageHeading(`${weekday} · SUA LOJA EM FOCO`, `${greeting}${firstName ? `, ${firstName}` : ""} 👋`, "Aqui está o resumo do que está acontecendo na sua loja hoje.", action)}
     <div class="metric-grid">
       <article class="metric-card"><div class="metric-top"><span>Vendas de hoje</span><span class="metric-icon">${iconMarkup("receipt")}</span></div><div class="metric-value">${completedToday.length}</div><div class="metric-note"><strong>${today.length ? "Tudo atualizado" : "Vamos começar?"}</strong> · vendas concluídas</div></article>
       <article class="metric-card"><div class="metric-top"><span>Faturamento do dia</span><span class="metric-icon">${iconMarkup("coin")}</span></div><div class="metric-value">${money(revenue)}</div><div class="metric-note">valor líquido de vendas concluídas</div></article>
