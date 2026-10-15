@@ -7,12 +7,22 @@ function assertNoError(result) {
   return result.data;
 }
 
-async function fetchAll(query) {
+async function fetchAll(queryForPage) {
   const results = [];
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const page = assertNoError(await query.range(offset, offset + PAGE_SIZE - 1));
-    results.push(...page);
-    if (page.length < PAGE_SIZE) return results;
+  const firstPage = assertNoError(await queryForPage().range(0, PAGE_SIZE - 1));
+  results.push(...firstPage);
+  if (firstPage.length < PAGE_SIZE) return results;
+
+  for (let offset = PAGE_SIZE; ; offset += PAGE_SIZE * 2) {
+    const pages = await Promise.all([
+      queryForPage().range(offset, offset + PAGE_SIZE - 1),
+      queryForPage().range(offset + PAGE_SIZE, offset + PAGE_SIZE * 2 - 1)
+    ]);
+    for (const result of pages) {
+      const page = assertNoError(result);
+      results.push(...page);
+      if (page.length < PAGE_SIZE) return results;
+    }
   }
 }
 
@@ -45,6 +55,20 @@ function mapCustomer(row) {
   };
 }
 
+function mapCashEntry(entry) {
+  return {
+    id: entry.id,
+    direction: entry.direction,
+    description: entry.description,
+    counterparty: entry.counterparty ?? "",
+    category: entry.category,
+    amountCents: Number(entry.amount_cents),
+    dueDate: entry.due_date,
+    paymentMethod: entry.payment_method ?? "",
+    settledAt: entry.settled_at
+  };
+}
+
 export function createCloudStore(url, anonKey) {
   const client = createClient(url, anonKey, {
     auth: {
@@ -72,21 +96,28 @@ export function createCloudStore(url, anonKey) {
       .eq("id", storeId)
       .single());
 
-    const productsQuery = client.from("products").select("*").eq("store_id", storeId).order("created_at");
-    const categoriesQuery = client.from("product_categories").select("name").eq("store_id", storeId).order("created_at");
-    const customersQuery = client.from("customers").select("*").eq("store_id", storeId).order("created_at");
-    const salesQuery = client.from("sales").select("*").eq("store_id", storeId).order("created_at", { ascending: false });
-    const itemsQuery = client.from("sale_items").select("*").eq("store_id", storeId);
-    const movementsQuery = client.from("stock_movements").select("*").eq("store_id", storeId).order("created_at", { ascending: false });
-    const cashEntriesQuery = client.from("cash_entries").select("*").eq("store_id", storeId).order("due_date");
-    const [products, categories, customers, sales, items, movements, cashEntries] = await Promise.all([
+    const productsQuery = () => client.from("products")
+      .select("id, import_source_key, image_path, name, sku, category, price_cents, cost_cents, stock, low_stock, active")
+      .eq("store_id", storeId)
+      .order("created_at");
+    const categoriesQuery = () => client.from("product_categories").select("name").eq("store_id", storeId).order("created_at");
+    const customersQuery = () => client.from("customers")
+      .select("id, name, phone, email, created_at")
+      .eq("store_id", storeId)
+      .order("created_at");
+    const salesQuery = () => client.from("sales")
+      .select("id, sale_number, created_at, customer_id, import_customer_name, payment_method, status, total_cents, subtotal_cents, discount_cents, discount_type, discount_value, cancel_reason, import_source_key, import_source, import_reference, import_details, import_item_count, import_profit_cents")
+      .eq("store_id", storeId)
+      .order("created_at", { ascending: false });
+    const itemsQuery = () => client.from("sale_items")
+      .select("sale_id, product_id, product_name, unit_price_cents, unit_cost_cents, quantity")
+      .eq("store_id", storeId);
+    const [products, categories, customers, sales, items] = await Promise.all([
       fetchAll(productsQuery),
       fetchAll(categoriesQuery),
       fetchAll(customersQuery),
       fetchAll(salesQuery),
-      fetchAll(itemsQuery),
-      fetchAll(movementsQuery),
-      fetchAll(cashEntriesQuery)
+      fetchAll(itemsQuery)
     ]);
     const itemsBySale = new Map();
     for (const item of items) {
@@ -143,28 +174,20 @@ export function createCloudStore(url, anonKey) {
       products: products.map(product => mapProduct(product, client)),
       customers: customers.map(mapCustomer),
       sales: mappedSales,
-      movements: movements.map(movement => ({
-        id: movement.id,
-        productId: movement.product_id,
-        date: movement.created_at,
-        delta: movement.quantity_delta,
-        kind: movement.kind,
-        reason: movement.reason,
-        saleId: movement.sale_id
-      })),
-      cashEntries: cashEntries.map(entry => ({
-        id: entry.id,
-        direction: entry.direction,
-        description: entry.description,
-        counterparty: entry.counterparty ?? "",
-        category: entry.category,
-        amountCents: Number(entry.amount_cents),
-        dueDate: entry.due_date,
-        paymentMethod: entry.payment_method ?? "",
-        settledAt: entry.settled_at
-      })),
+      movements: [],
+      cashEntries: [],
+      cashEntriesLoaded: false,
       nextSale: sales.reduce((highest, sale) => Math.max(highest, Number(sale.sale_number)), 0) + 1
     };
+  }
+
+  async function loadCashEntries(storeId) {
+    const rows = await fetchAll(() => client
+      .from("cash_entries")
+      .select("id, direction, description, counterparty, category, amount_cents, due_date, payment_method, settled_at")
+      .eq("store_id", storeId)
+      .order("due_date"));
+    return rows.map(mapCashEntry);
   }
 
   async function loadForUser(user) {
@@ -425,5 +448,5 @@ export function createCloudStore(url, anonKey) {
     }
   }
 
-  return { client, loadForUser, createStore, loadStore, saveChanges, importKyteProducts, importKyteSales };
+  return { client, loadForUser, createStore, loadStore, loadCashEntries, saveChanges, importKyteProducts, importKyteSales };
 }

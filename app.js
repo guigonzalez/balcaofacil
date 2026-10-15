@@ -112,6 +112,7 @@ function loadState() {
 
 let state;
 let currentPage = "inicio";
+let pageLoadSequence = 0;
 let cashierMode = false;
 let cashierReturnState = null;
 let cart = [];
@@ -639,18 +640,34 @@ function renderPage() {
   else renderDashboard();
 }
 
-function navigate(page) {
+async function navigate(page) {
   if (!["inicio", "pdv", "produtos", "vendas", "caixa", "analises", "clientes"].includes(page)) return;
   if (page === "caixa" && !canManageCashFlow()) return;
+  const loadSequence = ++pageLoadSequence;
   currentPage = page;
   if (page !== "pdv") {
     cashierMode = false;
     cashierReturnState = null;
     productQuery = "";
   }
-  renderPage();
   closeMobileMenu();
   window.scrollTo({ top: 0, behavior: "smooth" });
+  if (page === "caixa" && state.cloud && !state.cashEntriesLoaded) {
+    pageContent.innerHTML = `<section class="panel"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Carregando fluxo de caixa</strong><p>Estamos buscando os lançamentos da loja.</p></div></div></section>`;
+    try {
+      const cashEntries = await cloudStore.loadCashEntries(state.storeId);
+      if (loadSequence !== pageLoadSequence || currentPage !== page || !state?.cloud) return;
+      state.cashEntries = cashEntries;
+      state.cashEntriesLoaded = true;
+    } catch (error) {
+      if (loadSequence !== pageLoadSequence || currentPage !== page) return;
+      console.error("Não foi possível carregar os lançamentos do fluxo de caixa.", error);
+      showToast(error.message || "Não foi possível carregar o fluxo de caixa.", "error");
+      pageContent.innerHTML = `<section class="panel"><div class="empty-state"><div><span class="empty-symbol">!</span><strong>Não foi possível carregar o fluxo de caixa</strong><p>Confira sua conexão e tente novamente.</p><button class="button button-secondary" style="margin-top:15px" type="button" data-page="caixa">Tentar novamente</button></div></div></section>`;
+      return;
+    }
+  }
+  if (loadSequence === pageLoadSequence) renderPage();
 }
 
 function captureCashierReturnState() {
