@@ -68,12 +68,14 @@ export function createCloudStore(url, anonKey) {
       .single());
 
     const productsQuery = client.from("products").select("*").eq("store_id", storeId).order("created_at");
+    const categoriesQuery = client.from("product_categories").select("name").eq("store_id", storeId).order("created_at");
     const customersQuery = client.from("customers").select("*").eq("store_id", storeId).order("created_at");
     const salesQuery = client.from("sales").select("*").eq("store_id", storeId).order("created_at", { ascending: false });
     const itemsQuery = client.from("sale_items").select("*").eq("store_id", storeId);
     const movementsQuery = client.from("stock_movements").select("*").eq("store_id", storeId).order("created_at", { ascending: false });
-    const [products, customers, sales, items, movements] = await Promise.all([
+    const [products, categories, customers, sales, items, movements] = await Promise.all([
       fetchAll(productsQuery),
+      fetchAll(categoriesQuery),
       fetchAll(customersQuery),
       fetchAll(salesQuery),
       fetchAll(itemsQuery),
@@ -115,6 +117,7 @@ export function createCloudStore(url, anonKey) {
         name: [user.user_metadata?.full_name, user.user_metadata?.name, user.user_metadata?.display_name]
           .find(value => typeof value === "string" && value.trim())?.trim() ?? ""
       },
+      categories: categories.map(category => category.name),
       products: products.map(mapProduct),
       customers: customers.map(mapCustomer),
       sales: mappedSales,
@@ -153,6 +156,12 @@ export function createCloudStore(url, anonKey) {
 
     if (previous.storeName !== next.storeName) {
       assertNoError(await client.from("stores").update({ name: next.storeName }).eq("id", storeId));
+    }
+
+    const previousCategories = new Set(previous.categories);
+    for (const category of next.categories) {
+      if (previousCategories.has(category)) continue;
+      assertNoError(await client.from("product_categories").insert({ store_id: storeId, name: category }));
     }
 
     const previousCustomers = new Map(previous.customers.map(customer => [customer.id, customer]));
@@ -213,6 +222,12 @@ export function createCloudStore(url, anonKey) {
           }).eq("id", product.id).eq("store_id", storeId));
         }
       }
+    }
+
+    const nextCategories = new Set(next.categories);
+    for (const category of previous.categories) {
+      if (nextCategories.has(category)) continue;
+      assertNoError(await client.from("product_categories").delete().eq("store_id", storeId).eq("name", category));
     }
 
     const previousSales = new Map(previous.sales.map(sale => [sale.id, sale]));

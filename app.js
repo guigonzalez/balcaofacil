@@ -28,7 +28,7 @@ const productArt = {
   "Pote cerâmica": ["🏺", "thumb-yellow"],
   "Kit presente": ["🎁", "thumb-pink"]
 };
-const categories = ["Todos", "Casa", "Papelaria", "Cuidados", "Acessórios"];
+const defaultCategories = ["Casa", "Papelaria", "Cuidados", "Acessórios", "Outros"];
 
 function localDayOffset(offset) {
   const date = new Date();
@@ -60,7 +60,7 @@ function demoState() {
     { id: "VD-1041", date: localDayOffset(0), customerId: "c3", payment: "Pix", status: "completed", items: [{ productId: "p1", name: "Caneca artesanal", price: 6800, cost: 3200, quantity: 1 }, { productId: "p5", name: "Sabonete de lavanda", price: 1890, cost: 700, quantity: 2 }], total: 10580, cancelReason: "" },
     { id: "VD-1042", date: localDayOffset(0), customerId: "c4", payment: "Cartão", status: "completed", items: [{ productId: "p3", name: "Vela de capim-limão", price: 5200, cost: 2400, quantity: 1 }, { productId: "p6", name: "Garrafa térmica", price: 8900, cost: 4600, quantity: 1 }], total: 14100, cancelReason: "" }
   ];
-  return { version: 1, storeName: "Balcão da Vila", products, customers, sales, movements: [], nextSale: 1043 };
+  return { version: 1, storeName: "Balcão da Vila", categories: [...defaultCategories], products, customers, sales, movements: [], nextSale: 1043 };
 }
 
 function loadState() {
@@ -81,6 +81,11 @@ function loadState() {
   ) {
     throw new Error("Os dados salvos não estão em um formato reconhecido. Exporte-os antes de limpar o armazenamento.");
   }
+  const storedCategories = Array.isArray(state.categories)
+    ? state.categories
+    : [...defaultCategories, ...state.products.map(product => product.category)];
+  state.categories = [...new Set([...storedCategories, ...state.products.map(product => product.category)]
+    .filter(category => typeof category === "string" && category.trim() && category !== "Todos"))];
   return state;
 }
 
@@ -367,7 +372,7 @@ function renderProducts() {
   }).join("");
   pageContent.innerHTML = `${pageHeading("CATÁLOGO DA LOJA", "Produtos", "Cuide do seu catálogo e mantenha o estoque sempre atualizado.", action)}
     <div class="detail-strip"><div class="detail-stat"><span>Produtos ativos</span><strong>${state.products.filter(product => product.active).length}</strong></div><div class="detail-stat"><span>Estoque baixo</span><strong>${state.products.filter(product => product.active && product.stock <= product.lowStock).length}</strong></div><div class="detail-stat"><span>Valor em estoque</span><strong>${money(state.products.filter(product => product.active).reduce((sum, product) => sum + product.price * product.stock, 0))}</strong></div></div>
-    <section class="panel"><div class="list-toolbar"><label class="search-box">${iconMarkup("search")}<input id="product-search" type="search" placeholder="Buscar produto ou código..." value="${escapeHTML(productQuery)}" aria-label="Buscar produto ou código"></label><span class="toolbar-spacer"></span><select class="select-control" id="product-filter" aria-label="Filtrar produtos"><option value="active"${productFilter === "active" ? " selected" : ""}>Produtos ativos</option><option value="all"${productFilter === "all" ? " selected" : ""}>Todos os produtos</option><option value="inactive"${productFilter === "inactive" ? " selected" : ""}>Arquivados</option></select><button class="button button-secondary button-small" type="button" data-action="adjust-stock-list">↕ Ajustar estoque</button></div>
+    <section class="panel"><div class="list-toolbar"><label class="search-box">${iconMarkup("search")}<input id="product-search" type="search" placeholder="Buscar produto ou código..." value="${escapeHTML(productQuery)}" aria-label="Buscar produto ou código"></label><span class="toolbar-spacer"></span><select class="select-control" id="product-filter" aria-label="Filtrar produtos"><option value="active"${productFilter === "active" ? " selected" : ""}>Produtos ativos</option><option value="all"${productFilter === "all" ? " selected" : ""}>Todos os produtos</option><option value="inactive"${productFilter === "inactive" ? " selected" : ""}>Arquivados</option></select><button class="button button-secondary button-small" type="button" data-action="manage-categories">Categorias</button><button class="button button-secondary button-small" type="button" data-action="adjust-stock-list">↕ Ajustar estoque</button></div>
       <div class="table-wrap"><table><thead><tr><th>PRODUTO</th><th>CATEGORIA</th><th>PREÇO DE VENDA</th><th>CUSTO</th><th>ESTOQUE</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6"><div class="empty-state"><div><span class="empty-symbol">⌕</span><strong>Nenhum produto encontrado</strong><p>Tente outra busca ou cadastre um novo produto.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "produto" : "produtos"} exibidos</div></section>`;
 }
 
@@ -410,6 +415,8 @@ function renderCustomers() {
 }
 
 function renderPOS() {
+  const posCategories = ["Todos", ...state.categories];
+  if (!posCategories.includes(posCategory)) posCategory = "Todos";
   const available = state.products.filter(product => product.active && (posCategory === "Todos" || product.category === posCategory) && `${product.name} ${product.sku}`.toLocaleLowerCase("pt-BR").includes(productQuery.toLocaleLowerCase("pt-BR")));
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const total = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
@@ -419,7 +426,7 @@ function renderPOS() {
   }).join("");
   const customerOptions = state.customers.map(customer => `<option value="${escapeHTML(customer.id)}"${selectedCustomer === customer.id ? " selected" : ""}>${escapeHTML(customer.name)}</option>`).join("");
   pageContent.innerHTML = `${pageHeading("VENDA PRESENCIAL", "Frente de caixa", "Toque em um produto para adicioná-lo à venda.", "")}
-    <div class="pos-layout"><div class="pos-main"><div class="pos-toolbar"><label class="search-box">${iconMarkup("search")}<input id="pos-search" type="search" placeholder="Buscar um produto..." value="${escapeHTML(productQuery)}" aria-label="Buscar produto para venda"></label><div class="category-list" role="group" aria-label="Filtrar categoria">${categories.map(category => `<button class="category-chip${posCategory === category ? " is-selected" : ""}" type="button" data-category="${escapeHTML(category)}">${escapeHTML(category)}</button>`).join("")}</div></div>
+    <div class="pos-layout"><div class="pos-main"><div class="pos-toolbar"><label class="search-box">${iconMarkup("search")}<input id="pos-search" type="search" placeholder="Buscar um produto..." value="${escapeHTML(productQuery)}" aria-label="Buscar produto para venda"></label><div class="category-list" role="group" aria-label="Filtrar categoria">${posCategories.map(category => `<button class="category-chip${posCategory === category ? " is-selected" : ""}" type="button" data-category="${escapeHTML(category)}">${escapeHTML(category)}</button>`).join("")}</div></div>
       <div class="pos-product-grid">${productCards || `<div class="empty-state"><div><span class="empty-symbol">⌕</span><strong>Nenhum produto disponível</strong><p>Cadastre um produto ou ajuste os filtros.</p></div></div>`}</div></div>
     <section class="panel cart-panel"><div class="panel-header"><div class="cart-heading"><h2 class="panel-title">Venda atual</h2><span class="cart-badge">${cartCount}</span></div><button class="table-action danger" type="button" data-action="clear-cart" ${cart.length ? "" : "disabled"}>Limpar</button></div>
       <div class="cart-body">${cart.length ? cart.map(line => `<div class="cart-item"><div class="cart-item-title">${escapeHTML(line.name)}</div><div class="cart-item-total">${money(line.price * line.quantity)}</div><div class="cart-item-subtitle">${money(line.price)} cada</div><div class="quantity-control"><button type="button" data-action="cart-quantity" data-id="${escapeHTML(line.productId)}" data-delta="-1" aria-label="Diminuir quantidade">−</button><span>${line.quantity}</span><button type="button" data-action="cart-quantity" data-id="${escapeHTML(line.productId)}" data-delta="1" aria-label="Aumentar quantidade">+</button></div></div>`).join("") : `<div class="cart-empty"><div><span>🛍️</span><p>Sua venda começa<br>com um produto.</p></div></div>`}</div>
@@ -465,13 +472,26 @@ function productForm(product = null) {
   openDialog(editing ? "Editar produto" : "Novo produto", editing ? "Atualize as informações do item." : "Cadastre um item para começar a vender.", `<form id="product-form"><input type="hidden" name="id" value="${escapeHTML(product?.id ?? "")}"><div class="form-grid">
     <div class="form-field full"><label for="product-name">Nome do produto *</label><input id="product-name" name="name" required maxlength="70" placeholder="Ex.: Caneca artesanal" value="${escapeHTML(product?.name ?? "")}"></div>
     <div class="form-field"><label for="product-sku">Código / SKU</label><input id="product-sku" name="sku" maxlength="30" placeholder="Opcional" value="${escapeHTML(product?.sku ?? "")}"></div>
-    <div class="form-field"><label for="product-category">Categoria *</label><select id="product-category" name="category" required>${categories.filter(category => category !== "Todos").map(category => `<option value="${escapeHTML(category)}"${product?.category === category ? " selected" : ""}>${escapeHTML(category)}</option>`).join("")}<option value="Outros"${product?.category === "Outros" ? " selected" : ""}>Outros</option></select></div>
+    <div class="form-field"><label for="product-category">Categoria *</label><select id="product-category" name="category" required>${state.categories.map(category => `<option value="${escapeHTML(category)}"${product?.category === category ? " selected" : ""}>${escapeHTML(category)}</option>`).join("")}</select></div>
     <div class="form-field"><label for="product-price">Preço de venda *</label><input id="product-price" name="price" inputmode="decimal" required placeholder="0,00" value="${product ? (product.price / 100).toFixed(2).replace(".", ",") : ""}"></div>
     <div class="form-field"><label for="product-cost">Custo unitário</label><input id="product-cost" name="cost" inputmode="decimal" placeholder="Opcional" value="${product?.cost !== null && product?.cost !== undefined ? (product.cost / 100).toFixed(2).replace(".", ",") : ""}"></div>
     ${editing ? "" : `<div class="form-field"><label for="product-stock">Estoque inicial *</label><input id="product-stock" name="stock" type="number" min="0" step="1" required value="0"></div>`}
     <div class="form-field"><label for="product-low">Alerta quando chegar em</label><input id="product-low" name="lowStock" type="number" min="0" step="1" required value="${product?.lowStock ?? 3}"><span class="field-hint">Quantidade mínima para avisar sobre reposição.</span></div>
   </div><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Cancelar</button><button class="button button-primary" type="submit">${editing ? "Salvar alterações" : "Cadastrar produto"}</button></div></form>`);
   $("#product-name").focus();
+}
+
+function categoryManagerDialog() {
+  const rows = state.categories.map(category => {
+    const productCount = state.products.filter(product => product.category === category).length;
+    const cannotDelete = productCount > 0 || state.categories.length <= 1;
+    const detail = productCount
+      ? `${productCount} ${productCount === 1 ? "produto usa" : "produtos usam"} esta categoria`
+      : state.categories.length <= 1 ? "Mantenha ao menos uma categoria" : "Sem produtos";
+    return `<li class="category-manager-row"><div><strong>${escapeHTML(category)}</strong><small>${detail}</small></div><button class="table-action danger" type="button" data-action="delete-category" data-id="${escapeHTML(category)}" ${cannotDelete ? "disabled" : ""}>Apagar</button></li>`;
+  }).join("");
+  openDialog("Categorias de produtos", "Organize os produtos e os filtros do frente de caixa.", `<form id="category-form"><div class="form-field"><label for="category-name">Nova categoria</label><input id="category-name" name="name" required maxlength="40" placeholder="Ex.: Bebidas"></div><div class="dialog-actions"><button class="button button-primary" type="submit">Cadastrar categoria</button></div></form><ul class="category-manager-list">${rows}</ul><p class="field-hint">Uma categoria só pode ser apagada quando nenhum produto estiver usando-a.</p>`);
+  $("#category-name").focus();
 }
 
 function customerForm(customer = null) {
@@ -903,6 +923,18 @@ document.addEventListener("click", async event => {
   if (action === "close-dialog") closeDialog();
   else if (action === "receipt-done") { closeDialog(); navigate("vendas"); }
   else if (action === "settings") settingsDialog();
+  else if (action === "manage-categories") categoryManagerDialog();
+  else if (action === "delete-category") {
+    const productCount = state.products.filter(product => product.category === id).length;
+    if (productCount) return showToast("Reclassifique os produtos antes de apagar esta categoria.", "error");
+    if (state.categories.length <= 1) return showToast("Mantenha ao menos uma categoria cadastrada.", "error");
+    const current = structuredClone(state);
+    current.categories = current.categories.filter(category => category !== id);
+    if (await commit(current, `Categoria “${id}” apagada.`)) {
+      if (posCategory === id) posCategory = "Todos";
+      categoryManagerDialog();
+    }
+  }
   else if (action === "add-product") productForm();
   else if (action === "edit-product") productForm(state.products.find(product => product.id === id));
   else if (action === "toggle-product") {
@@ -957,6 +989,15 @@ document.addEventListener("submit", async event => {
     }
   } else if (formId === "invite-form") {
     await inviteTeamMember(event.target);
+  } else if (formId === "category-form") {
+    const name = String(new FormData(event.target).get("name") || "").trim();
+    if (!name || name.length > 40 || name.toLocaleLowerCase("pt-BR") === "todos") return showToast("Informe um nome de categoria válido (até 40 caracteres).", "error");
+    if (state.categories.some(category => category.toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR"))) {
+      return showToast("Já existe uma categoria com esse nome.", "error");
+    }
+    const current = structuredClone(state);
+    current.categories.push(name);
+    if (await commit(current, `Categoria “${name}” cadastrada.`)) categoryManagerDialog();
   } else if (formId === "product-form") await handleProductSubmit(event.target);
   else if (formId === "customer-form") await handleCustomerSubmit(event.target);
   else if (formId === "stock-form") await handleStockSubmit(event.target);
