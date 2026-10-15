@@ -16,10 +16,14 @@ async function fetchAll(query) {
   }
 }
 
-function mapProduct(row) {
+function mapProduct(row, client) {
   return {
     id: row.id,
     importSourceKey: row.import_source_key ?? "",
+    imagePath: row.image_path ?? "",
+    imageUrl: row.image_path
+      ? client.storage.from("product-images").getPublicUrl(row.image_path).data.publicUrl
+      : "",
     name: row.name,
     sku: row.sku ?? "",
     category: row.category,
@@ -110,7 +114,9 @@ export function createCloudStore(url, anonKey) {
       importReference: sale.import_reference ?? "",
       importDetails: sale.import_details ?? "",
       importItemCount: sale.import_item_count ?? null,
-      importProfitCents: sale.import_profit_cents ?? null
+      importProfitCents: sale.import_profit_cents === null || sale.import_profit_cents === undefined
+        ? null
+        : Number(sale.import_profit_cents)
     }));
 
     return {
@@ -126,7 +132,7 @@ export function createCloudStore(url, anonKey) {
           .find(value => typeof value === "string" && value.trim())?.trim() ?? ""
       },
       categories: categories.map(category => category.name),
-      products: products.map(mapProduct),
+      products: products.map(product => mapProduct(product, client)),
       customers: customers.map(mapCustomer),
       sales: mappedSales,
       movements: movements.map(movement => ({
@@ -192,7 +198,7 @@ export function createCloudStore(url, anonKey) {
     }));
   }
 
-  async function saveChanges(previous, next) {
+  async function saveChanges(previous, next, productImageChanges = new Map()) {
     const storeId = previous.storeId;
     if (next.storeId !== storeId) throw new Error("A sessão da loja expirou. Entre novamente.");
 
@@ -229,10 +235,15 @@ export function createCloudStore(url, anonKey) {
 
     const previousProducts = new Map(previous.products.map(product => [product.id, product]));
     const createdProductIds = new Set();
+    const productIdChanges = new Map();
+    const oldProductsByPersistedId = new Map();
+    const imageChangesByPersistedId = new Map();
     for (const product of next.products) {
-      const old = previousProducts.get(product.id);
+      const originalId = product.id;
+      const old = previousProducts.get(originalId);
+      const imageChange = productImageChanges.get(originalId);
       if (!old) {
-        assertNoError(await client.rpc("create_product", {
+        product.id = assertNoError(await client.rpc("create_product", {
           target_store_id: storeId,
           product_name: product.name,
           product_sku: product.sku || null,
@@ -242,6 +253,7 @@ export function createCloudStore(url, anonKey) {
           initial_stock: product.stock,
           product_low_stock: product.lowStock
         }));
+        productIdChanges.set(originalId, product.id);
         createdProductIds.add(product.id);
       } else {
         const changed =
@@ -263,6 +275,51 @@ export function createCloudStore(url, anonKey) {
             active: product.active
           }).eq("id", product.id).eq("store_id", storeId));
         }
+      }
+      oldProductsByPersistedId.set(product.id, old ?? null);
+      if (imageChange) imageChangesByPersistedId.set(product.id, imageChange);
+    }
+
+    for (const movement of next.movements) {
+      if (productIdChanges.has(movement.productId)) movement.productId = productIdChanges.get(movement.productId);
+    }
+    for (const sale of next.sales) {
+      for (const item of sale.items) {
+        if (productIdChanges.has(item.productId)) item.productId = productIdChanges.get(item.productId);
+      }
+    }
+
+    for (const product of next.products) {
+      const imageChange = imageChangesByPersistedId.get(product.id);
+      if (!imageChange) continue;
+      const previousImagePath = oldProductsByPersistedId.get(product.id)?.imagePath ?? "";
+      if (imageChange.file) {
+        const extension = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" }[imageChange.file.type];
+        if (!extension || imageChange.file.size > 5 * 1024 * 1024) {
+          throw new Error("Produto salvo, mas a foto não é válida ou excede 5 MB.");
+        }
+        const imagePath = `${storeId}/${product.id}.${extension}`;
+        const upload = await client.storage.from("product-images").upload(imagePath, imageChange.file, {
+          cacheControl: "3600",
+          contentType: imageChange.file.type,
+          upsert: true
+        });
+        if (upload.error) throw new Error(`Produto salvo, mas não foi possível enviar a foto: ${upload.error.message}`);
+        assertNoError(await client.from("products").update({ image_path: imagePath }).eq("id", product.id).eq("store_id", storeId));
+        product.imagePath = imagePath;
+        product.imageUrl = client.storage.from("product-images").getPublicUrl(imagePath).data.publicUrl;
+        if (previousImagePath && previousImagePath !== imagePath) {
+          const removal = await client.storage.from("product-images").remove([previousImagePath]);
+          if (removal.error) throw new Error(`A foto nova foi salva, mas a anterior não pôde ser removida: ${removal.error.message}`);
+        }
+      } else if (imageChange.remove) {
+        if (previousImagePath) {
+          assertNoError(await client.from("products").update({ image_path: null }).eq("id", product.id).eq("store_id", storeId));
+          const removal = await client.storage.from("product-images").remove([previousImagePath]);
+          if (removal.error) throw new Error(`A foto foi desvinculada do produto, mas não pôde ser apagada do armazenamento: ${removal.error.message}`);
+        }
+        product.imagePath = "";
+        product.imageUrl = "";
       }
     }
 

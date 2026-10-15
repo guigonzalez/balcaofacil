@@ -1,5 +1,6 @@
 import { createCloudStore } from "./cloud-store.js";
 import { parseKyteProductsCsv, parseKyteSalesCsv } from "./kyte-import.js";
+import { calculateSalesAnalytics } from "./sales-analytics.js";
 
 const STORAGE_KEY = "balcao-mvp-v1";
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -101,7 +102,9 @@ let salesQuery = "";
 let salesFilter = "all";
 let salesPeriod = "all";
 let productFilter = "active";
+let analyticsPeriod = 30;
 let toastTimer;
+let productPreviewUrl = "";
 let cloudStore = null;
 let cloudUser = null;
 let storeRole = null;
@@ -166,6 +169,40 @@ function artFor(name) {
   return productArt[name] ?? ["📦", "thumb-green"];
 }
 
+function productImageSource(product) {
+  return product.imageData || product.imageUrl || "";
+}
+
+function productThumbMarkup(product, className, color) {
+  const source = productImageSource(product);
+  return source
+    ? `<img class="${className} product-photo" src="${escapeHTML(source)}" alt="" loading="lazy">`
+    : `<span class="${className} ${color}">${artFor(product.name)[0]}</span>`;
+}
+
+async function localProductImage(file) {
+  const temporaryUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = temporaryUrl;
+    await image.decode();
+    const scale = Math.min(1, 640 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Este navegador não conseguiu processar a foto.");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    for (const quality of [0.8, 0.65, 0.5, 0.35]) {
+      const result = canvas.toDataURL("image/webp", quality);
+      if (result.length <= 420_000) return result;
+    }
+    throw new Error("A foto não pôde ser reduzida o suficiente para a demonstração local.");
+  } finally {
+    URL.revokeObjectURL(temporaryUrl);
+  }
+}
+
 function showToast(message, type = "success") {
   const region = $("#toast-region");
   const toast = document.createElement("div");
@@ -176,7 +213,7 @@ function showToast(message, type = "success") {
   toastTimer = setTimeout(() => toast.remove(), 3500);
 }
 
-function commit(nextState, successMessage) {
+function commit(nextState, successMessage, productImageChanges = new Map()) {
   if (cloudStore) return commitCloudState(nextState, successMessage);
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
@@ -192,7 +229,7 @@ function commit(nextState, successMessage) {
   return true;
 }
 
-async function commitCloudState(nextState, successMessage) {
+async function commitCloudState(nextState, successMessage, productImageChanges) {
   if (cloudWritePending) {
     showToast("Aguarde a operação atual terminar antes de salvar outra alteração.", "error");
     return false;
@@ -203,7 +240,7 @@ async function commitCloudState(nextState, successMessage) {
   updateShell();
   renderPage();
   try {
-    await cloudStore.saveChanges(previous, nextState);
+    await cloudStore.saveChanges(previous, nextState, productImageChanges);
     const refreshed = await cloudStore.loadForUser(cloudUser);
     if (refreshed.needsStore) throw new Error("Sua loja não está mais associada a esta conta. Entre novamente.");
     state = refreshed.state;
@@ -324,6 +361,55 @@ function chartMarkup(sales) {
   }).join("")}</svg>`;
 }
 
+function analyticsChartMarkup(points) {
+  const max = Math.max(1, ...points.map(point => point.value));
+  const left = 28;
+  const right = 732;
+  const graphTop = 18;
+  const graphHeight = 166;
+  const slotWidth = (right - left) / points.length;
+  const barWidth = Math.min(40, slotWidth * 0.56);
+  const labelStep = points.length <= 7 ? 1 : points.length <= 10 ? 2 : 3;
+  const formatter = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" });
+  return `<svg class="sales-chart analytics-chart" viewBox="0 0 760 235" role="img" aria-label="Faturamento diário no período selecionado">${[0, 1, 2, 3].map(index => `<line class="chart-gridline" x1="${left}" y1="${graphTop + index * graphHeight / 3}" x2="${right}" y2="${graphTop + index * graphHeight / 3}"/>`).join("")}${points.map((point, index) => {
+    const height = point.value ? Math.max(3, point.value / max * graphHeight) : 2;
+    const x = left + index * slotWidth + (slotWidth - barWidth) / 2;
+    const y = graphTop + graphHeight - height;
+    const label = formatter.format(point.date);
+    const showLabel = index % labelStep === 0 || index === points.length - 1;
+    return `<rect class="chart-bar${point.value ? " is-today" : ""}" x="${x}" y="${y}" width="${barWidth}" height="${height}" rx="4"><title>${escapeHTML(label)}: ${escapeHTML(money(point.value))}</title></rect>${showLabel ? `<text class="chart-label" x="${x + barWidth / 2}" y="213" text-anchor="middle">${escapeHTML(label.replace(".", ""))}</text>` : ""}`;
+  }).join("")}</svg>`;
+}
+
+function renderAnalytics() {
+  const analysis = calculateSalesAnalytics(state.sales, analyticsPeriod);
+  const paymentTotal = analysis.payments.reduce((sum, payment) => sum + payment.totalCents, 0);
+  const paymentRows = analysis.payments.map(payment => {
+    const share = paymentTotal ? payment.totalCents / paymentTotal : 0;
+    return `<div class="analytics-breakdown-row"><div class="analytics-breakdown-label"><strong>${escapeHTML(payment.name)}</strong><span>${money(payment.totalCents)} · ${Math.round(share * 100)}%</span></div><div class="analytics-meter"><span style="width:${Math.round(share * 100)}%"></span></div></div>`;
+  }).join("");
+  const productRows = analysis.topProducts.map(product => {
+    const storedProduct = state.products.find(item => item.id === product.id || item.name === product.name);
+    const [emoji, color] = artFor(product.name);
+    return `<div class="analytics-product-row">${storedProduct ? productThumbMarkup(storedProduct, "product-thumb", color) : `<span class="product-thumb ${color}">${emoji}</span>`}<div class="analytics-product-name"><strong>${escapeHTML(product.name)}</strong><small>${product.quantity} ${product.quantity === 1 ? "unidade" : "unidades"}</small></div><strong class="analytics-product-revenue">${money(product.revenueCents)}</strong></div>`;
+  }).join("");
+  const periodLabel = `Últimos ${analyticsPeriod} dias`;
+  const action = `<button class="button button-secondary" type="button" data-page="vendas">Ver vendas</button>`;
+  pageContent.innerHTML = `${pageHeading("DESEMPENHO DA LOJA", "Análises de vendas", "Acompanhe faturamento, ticket médio e o que mais vende.", action)}
+    <section class="panel analytics-toolbar"><label for="analytics-period">Período</label><select class="select-control" id="analytics-period" aria-label="Período das análises"><option value="7"${analyticsPeriod === 7 ? " selected" : ""}>Últimos 7 dias</option><option value="30"${analyticsPeriod === 30 ? " selected" : ""}>Últimos 30 dias</option><option value="90"${analyticsPeriod === 90 ? " selected" : ""}>Últimos 90 dias</option></select><span>${formatDate(analysis.start)} – ${formatDate(analysis.end)}</span></section>
+    <div class="metric-grid">
+      <article class="metric-card"><div class="metric-top"><span>Faturamento</span><span class="metric-icon">${iconMarkup("coin")}</span></div><div class="metric-value">${money(analysis.revenueCents)}</div><div class="metric-note">${analysis.completedCount} ${analysis.completedCount === 1 ? "venda concluída" : "vendas concluídas"}${analysis.cancelledCount ? ` · ${analysis.cancelledCount} canceladas excluídas` : ""}</div></article>
+      <article class="metric-card"><div class="metric-top"><span>Vendas concluídas</span><span class="metric-icon">${iconMarkup("receipt")}</span></div><div class="metric-value">${analysis.completedCount}</div><div class="metric-note">Cancelamentos não entram no cálculo</div></article>
+      <article class="metric-card"><div class="metric-top"><span>Ticket médio</span><span class="metric-icon">${iconMarkup("bag")}</span></div><div class="metric-value">${money(analysis.averageTicketCents)}</div><div class="metric-note">Faturamento dividido pelas vendas concluídas</div></article>
+      <article class="metric-card"><div class="metric-top"><span>Lucro bruto estimado</span><span class="metric-icon">${iconMarkup("trend")}</span></div><div class="metric-value">${money(analysis.grossProfitCents)}</div><div class="metric-note">${analysis.profitIsPartial ? "Estimativa parcial · há custos não informados" : "Com base nos custos cadastrados"}</div></article>
+    </div>
+    <section class="panel analytics-chart-panel"><div class="panel-header"><div><h2 class="panel-title">Faturamento ao longo do tempo</h2><p class="panel-subtitle">${periodLabel} · somente vendas concluídas</p></div><strong class="analytics-total">${money(analysis.revenueCents)}</strong></div><div class="analytics-chart-wrap">${analysis.completedCount ? analyticsChartMarkup(analysis.trend) : `<div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Sem vendas neste período</strong><p>As vendas concluídas vão aparecer neste gráfico.</p></div></div>`}</div></section>
+    <div class="dashboard-grid analytics-detail-grid">
+      <section class="panel"><div class="panel-header"><div><h2 class="panel-title">Vendas por pagamento</h2><p class="panel-subtitle">Distribuição do faturamento por forma</p></div></div><div class="analytics-breakdown">${paymentRows || `<div class="analytics-empty">Ainda não há vendas concluídas no período.</div>`}</div></section>
+      <section class="panel"><div class="panel-header"><div><h2 class="panel-title">Produtos mais vendidos</h2><p class="panel-subtitle">Ordenados por unidades vendidas</p></div></div><div class="analytics-products">${productRows || `<div class="analytics-empty">Ainda não há itens de venda no período.</div>`}<p class="analytics-footnote">Vendas históricas importadas do Kyte não detalham itens por produto e não aparecem neste ranking.</p></div></section>
+    </div>`;
+}
+
 function renderDashboard() {
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Bom dia" : hour < 18 ? "Boa tarde" : "Boa noite";
@@ -352,7 +438,7 @@ function renderDashboard() {
       <article class="metric-card"><div class="metric-top"><span>Produtos ativos</span><span class="metric-icon">${iconMarkup("box")}</span></div><div class="metric-value">${activeProducts.length}</div><div class="metric-note">${lowProducts.length ? `<strong>${lowProducts.length} precisam de atenção</strong>` : "estoque em dia"} · no seu catálogo</div></article>
     </div>
     <div class="dashboard-grid">
-      <section class="panel"><div class="panel-header"><div><h2 class="panel-title">Visão das vendas</h2><p class="panel-subtitle">Como sua loja foi nos últimos 7 dias</p></div><span class="status-pill">Últimos 7 dias</span></div><div class="chart-summary"><strong>${money(weekTotal)}</strong><span>faturamento no período</span></div><div class="chart-wrap">${chartMarkup(salesWeek)}</div></section>
+      <section class="panel"><div class="panel-header"><div><h2 class="panel-title">Visão das vendas</h2><p class="panel-subtitle">Como sua loja foi nos últimos 7 dias</p></div><button class="text-link" data-page="analises" type="button">Ver análises <span>↗</span></button></div><div class="chart-summary"><strong>${money(weekTotal)}</strong><span>faturamento no período</span></div><div class="chart-wrap">${chartMarkup(salesWeek)}</div></section>
       <section class="panel"><div class="panel-header"><div><h2 class="panel-title">Estoque pedindo atenção</h2><p class="panel-subtitle">Produtos no limite ou abaixo dele</p></div><button class="text-link" data-page="produtos" type="button">Ver estoque <span>↗</span></button></div>
         <div class="stock-list">${lowProducts.length ? lowProducts.slice(0, 4).map(product => { const [emoji, color] = artFor(product.name); return `<div class="stock-row"><span class="product-thumb ${color}">${emoji}</span><div><div class="stock-product">${escapeHTML(product.name)}</div><div class="stock-sku">${escapeHTML(product.sku || product.category)}</div></div><div class="stock-level">${product.stock === 0 ? "Sem estoque" : `${product.stock} un.`}<span>mín. ${product.lowStock} un.</span></div></div>`; }).join("") : `<div class="empty-state"><div><span class="empty-symbol">✓</span><strong>Estoque em dia</strong><p>Nenhum produto está abaixo do mínimo.</p></div></div>`}</div>
       </section>
@@ -373,7 +459,7 @@ function renderProducts() {
   const action = `<button class="button button-primary" type="button" data-action="add-product"><span class="button-icon">＋</span> Novo produto</button>`;
   const rows = filtered.map(product => {
     const [emoji, color] = artFor(product.name);
-    return `<tr><td><div class="product-cell-name"><span class="product-thumb ${color}">${emoji}</span><div><strong>${escapeHTML(product.name)}</strong><div class="stock-sku">${escapeHTML(product.sku || "Sem código")}</div></div></div></td><td>${escapeHTML(product.category)}</td><td><strong>${money(product.price)}</strong></td><td>${product.cost === null ? "—" : money(product.cost)}</td><td>${stockPill(product)}</td><td><div class="row-actions"><button class="table-action" type="button" data-action="adjust-stock" data-id="${escapeHTML(product.id)}">Ajustar</button><button class="table-action" type="button" data-action="edit-product" data-id="${escapeHTML(product.id)}">Editar</button><button class="table-action ${product.active ? "danger" : ""}" type="button" data-action="toggle-product" data-id="${escapeHTML(product.id)}">${product.active ? "Arquivar" : "Ativar"}</button></div></td></tr>`;
+    return `<tr><td><div class="product-cell-name">${productImageSource(product) ? productThumbMarkup(product, "product-thumb", color) : `<span class="product-thumb ${color}">${emoji}</span>`}<div><strong>${escapeHTML(product.name)}</strong><div class="stock-sku">${escapeHTML(product.sku || "Sem código")}</div></div></div></td><td>${escapeHTML(product.category)}</td><td><strong>${money(product.price)}</strong></td><td>${product.cost === null ? "—" : money(product.cost)}</td><td>${stockPill(product)}</td><td><div class="row-actions"><button class="table-action" type="button" data-action="adjust-stock" data-id="${escapeHTML(product.id)}">Ajustar</button><button class="table-action" type="button" data-action="edit-product" data-id="${escapeHTML(product.id)}">Editar</button><button class="table-action ${product.active ? "danger" : ""}" type="button" data-action="toggle-product" data-id="${escapeHTML(product.id)}">${product.active ? "Arquivar" : "Ativar"}</button></div></td></tr>`;
   }).join("");
   pageContent.innerHTML = `${pageHeading("CATÁLOGO DA LOJA", "Produtos", "Cuide do seu catálogo e mantenha o estoque sempre atualizado.", action)}
     <div class="detail-strip"><div class="detail-stat"><span>Produtos ativos</span><strong>${state.products.filter(product => product.active).length}</strong></div><div class="detail-stat"><span>Estoque baixo</span><strong>${state.products.filter(product => product.active && product.stock <= product.lowStock).length}</strong></div><div class="detail-stat"><span>Valor em estoque</span><strong>${money(state.products.filter(product => product.active).reduce((sum, product) => sum + product.price * product.stock, 0))}</strong></div></div>
@@ -427,7 +513,7 @@ function renderPOS() {
   const total = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
   const productCards = available.map(product => {
     const [emoji, color] = artFor(product.name);
-    return `<button class="pos-product-card" type="button" data-action="add-to-cart" data-id="${escapeHTML(product.id)}" ${product.stock <= 0 ? "disabled" : ""}><span class="pos-product-emoji ${color}">${emoji}</span><span class="pos-product-name">${escapeHTML(product.name)}</span><span class="pos-product-bottom"><span class="pos-product-price">${money(product.price)}</span><span class="pos-product-stock">${product.stock > 0 ? `${product.stock} un.` : "Esgotado"}</span></span></button>`;
+    return `<button class="pos-product-card" type="button" data-action="add-to-cart" data-id="${escapeHTML(product.id)}" ${product.stock <= 0 ? "disabled" : ""}>${productImageSource(product) ? productThumbMarkup(product, "pos-product-emoji", color) : `<span class="pos-product-emoji ${color}">${emoji}</span>`}<span class="pos-product-name">${escapeHTML(product.name)}</span><span class="pos-product-bottom"><span class="pos-product-price">${money(product.price)}</span><span class="pos-product-stock">${product.stock > 0 ? `${product.stock} un.` : "Esgotado"}</span></span></button>`;
   }).join("");
   const customerOptions = state.customers.map(customer => `<option value="${escapeHTML(customer.id)}"${selectedCustomer === customer.id ? " selected" : ""}>${escapeHTML(customer.name)}</option>`).join("");
   pageContent.innerHTML = `${pageHeading("VENDA PRESENCIAL", "Frente de caixa", "Toque em um produto para adicioná-lo à venda.", "")}
@@ -445,12 +531,13 @@ function renderPage() {
   if (currentPage === "pdv") renderPOS();
   else if (currentPage === "produtos") renderProducts();
   else if (currentPage === "vendas") renderSales();
+  else if (currentPage === "analises") renderAnalytics();
   else if (currentPage === "clientes") renderCustomers();
   else renderDashboard();
 }
 
 function navigate(page) {
-  if (!["inicio", "pdv", "produtos", "vendas", "clientes"].includes(page)) return;
+  if (!["inicio", "pdv", "produtos", "vendas", "analises", "clientes"].includes(page)) return;
   currentPage = page;
   if (page !== "pdv") productQuery = "";
   renderPage();
@@ -470,12 +557,42 @@ function openDialog(title, subtitle, body, className = "") {
 
 function closeDialog() {
   if (dialog.open) dialog.close();
+  if (productPreviewUrl) {
+    URL.revokeObjectURL(productPreviewUrl);
+    productPreviewUrl = "";
+  }
+}
+
+function refreshProductImagePreview() {
+  const preview = $("#product-image-preview");
+  if (!preview) return;
+  if (productPreviewUrl) {
+    URL.revokeObjectURL(productPreviewUrl);
+    productPreviewUrl = "";
+  }
+  const removeImage = $("#product-remove-image")?.checked ?? false;
+  const fileInput = $("#product-image");
+  const selectedFile = fileInput?.files?.[0];
+  if (removeImage && fileInput) {
+    fileInput.value = "";
+    fileInput.disabled = true;
+  } else if (fileInput) {
+    fileInput.disabled = false;
+  }
+  const source = removeImage ? "" : selectedFile
+    ? (productPreviewUrl = URL.createObjectURL(selectedFile))
+    : preview.dataset.existingImage;
+  preview.innerHTML = source
+    ? `<img src="${escapeHTML(source)}" alt="Prévia da foto do produto">`
+    : `<span aria-hidden="true">＋</span>`;
 }
 
 function productForm(product = null) {
   const editing = product !== null;
+  const imageSource = product ? productImageSource(product) : "";
   openDialog(editing ? "Editar produto" : "Novo produto", editing ? "Atualize as informações do item." : "Cadastre um item para começar a vender.", `<form id="product-form"><input type="hidden" name="id" value="${escapeHTML(product?.id ?? "")}"><div class="form-grid">
     <div class="form-field full"><label for="product-name">Nome do produto *</label><input id="product-name" name="name" required maxlength="70" placeholder="Ex.: Caneca artesanal" value="${escapeHTML(product?.name ?? "")}"></div>
+    <div class="form-field full"><label for="product-image">Foto do produto</label><div class="product-image-editor"><div class="product-image-preview" id="product-image-preview" data-existing-image="${escapeHTML(imageSource)}">${imageSource ? `<img src="${escapeHTML(imageSource)}" alt="Prévia da foto do produto">` : `<span aria-hidden="true">＋</span>`}</div><div class="product-image-controls"><input id="product-image" name="image" type="file" accept="image/jpeg,image/png,image/webp"><span class="field-hint">Uma foto JPG, PNG ou WebP · até 5 MB.</span>${imageSource ? `<label class="product-image-remove"><input id="product-remove-image" name="removeImage" type="checkbox"> Remover foto atual</label>` : ""}</div></div></div>
     <div class="form-field"><label for="product-sku">Código / SKU</label><input id="product-sku" name="sku" maxlength="30" placeholder="Opcional" value="${escapeHTML(product?.sku ?? "")}"></div>
     <div class="form-field"><label for="product-category">Categoria *</label><select id="product-category" name="category" required>${state.categories.map(category => `<option value="${escapeHTML(category)}"${product?.category === category ? " selected" : ""}>${escapeHTML(category)}</option>`).join("")}</select></div>
     <div class="form-field"><label for="product-price">Preço de venda *</label><input id="product-price" name="price" inputmode="decimal" required placeholder="0,00" value="${product ? (product.price / 100).toFixed(2).replace(".", ",") : ""}"></div>
@@ -755,6 +872,9 @@ async function completeSale(form) {
 async function handleProductSubmit(form) {
   const data = new FormData(form);
   const id = String(data.get("id") || "");
+  const imageFile = data.get("image");
+  const hasImageFile = imageFile instanceof File && imageFile.size > 0;
+  const removeImage = data.get("removeImage") === "on";
   const name = String(data.get("name") || "").trim();
   const sku = String(data.get("sku") || "").trim();
   const category = String(data.get("category") || "Outros");
@@ -766,20 +886,50 @@ async function handleProductSubmit(form) {
   if (!name || !Number.isSafeInteger(price) || price <= 0 || (cost !== null && (!Number.isSafeInteger(cost) || cost < 0)) || !Number.isSafeInteger(lowStock) || lowStock < 0 || (!id && (!Number.isSafeInteger(stock) || stock < 0))) {
     return showToast("Confira o preço, custo e quantidades informados.", "error");
   }
+  if (hasImageFile && (!["image/jpeg", "image/png", "image/webp"].includes(imageFile.type) || imageFile.size > 5 * 1024 * 1024)) {
+    return showToast("Escolha uma foto JPG, PNG ou WebP de até 5 MB.", "error");
+  }
+  if (hasImageFile && removeImage) return showToast("Escolha entre enviar uma foto nova ou remover a atual.", "error");
+  let localImageData = "";
+  if (!cloudStore && hasImageFile) {
+    try {
+      localImageData = await localProductImage(imageFile);
+    } catch (error) {
+      console.error("Não foi possível preparar a foto do produto.", error);
+      return showToast(error.message || "Não foi possível preparar a foto.", "error");
+    }
+  }
   if (sku && state.products.some(product => product.sku.toLocaleLowerCase("pt-BR") === sku.toLocaleLowerCase("pt-BR") && product.id !== id)) {
     return showToast("Já existe um produto com esse código/SKU.", "error");
   }
   const current = structuredClone(state);
+  const productImageChanges = new Map();
+  let createdProduct = null;
   if (id) {
     const product = current.products.find(item => item.id === id);
     if (!product) return showToast("Não foi possível localizar o produto para editar.", "error");
     Object.assign(product, { name, sku, category, price, cost, lowStock });
+    if (cloudStore && (hasImageFile || removeImage)) {
+      productImageChanges.set(id, hasImageFile ? { file: imageFile } : { remove: true });
+    } else if (hasImageFile) {
+      product.imageData = localImageData;
+    } else if (removeImage) {
+      delete product.imageData;
+    }
   } else {
     const productId = crypto.randomUUID();
     current.products.push({ id: productId, name, sku, category, price, cost, stock, lowStock, active: true });
+    createdProduct = current.products.at(-1);
+    if (cloudStore && hasImageFile) productImageChanges.set(productId, { file: imageFile });
+    else if (hasImageFile) createdProduct.imageData = localImageData;
     if (stock > 0) current.movements.push({ id: crypto.randomUUID(), productId, date: new Date().toISOString(), delta: stock, kind: "entry", reason: "Estoque inicial" });
   }
-  if (await commit(current, id ? "Produto atualizado." : "Produto cadastrado.")) closeDialog();
+  const saved = await commit(current, id ? "Produto atualizado." : "Produto cadastrado.", productImageChanges);
+  if (saved) closeDialog();
+  else if (!id && createdProduct && state.products.some(product => product.id === createdProduct.id)) {
+    $("#product-form [name='id']").value = createdProduct.id;
+    $("#product-form button[type='submit']").textContent = "Salvar alterações";
+  }
 }
 
 async function handleCustomerSubmit(form) {
@@ -1222,7 +1372,17 @@ document.addEventListener("input", event => {
 });
 
 document.addEventListener("change", event => {
-  if (event.target.id === "product-filter") {
+  if (event.target.id === "product-image") {
+    const file = event.target.files?.[0];
+    if (file && (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024)) {
+      event.target.value = "";
+      refreshProductImagePreview();
+      return showToast("Escolha uma foto JPG, PNG ou WebP de até 5 MB.", "error");
+    }
+    refreshProductImagePreview();
+  } else if (event.target.id === "product-remove-image") {
+    refreshProductImagePreview();
+  } else if (event.target.id === "product-filter") {
     productFilter = event.target.value;
     renderProducts();
   } else if (event.target.id === "pos-customer") {
@@ -1230,6 +1390,9 @@ document.addEventListener("change", event => {
   } else if (event.target.id === "sales-period") {
     salesPeriod = event.target.value;
     renderSales();
+  } else if (event.target.id === "analytics-period") {
+    analyticsPeriod = Number(event.target.value);
+    renderAnalytics();
   }
 });
 
