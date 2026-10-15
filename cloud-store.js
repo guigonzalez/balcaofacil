@@ -78,13 +78,15 @@ export function createCloudStore(url, anonKey) {
     const salesQuery = client.from("sales").select("*").eq("store_id", storeId).order("created_at", { ascending: false });
     const itemsQuery = client.from("sale_items").select("*").eq("store_id", storeId);
     const movementsQuery = client.from("stock_movements").select("*").eq("store_id", storeId).order("created_at", { ascending: false });
-    const [products, categories, customers, sales, items, movements] = await Promise.all([
+    const cashEntriesQuery = client.from("cash_entries").select("*").eq("store_id", storeId).order("due_date");
+    const [products, categories, customers, sales, items, movements, cashEntries] = await Promise.all([
       fetchAll(productsQuery),
       fetchAll(categoriesQuery),
       fetchAll(customersQuery),
       fetchAll(salesQuery),
       fetchAll(itemsQuery),
-      fetchAll(movementsQuery)
+      fetchAll(movementsQuery),
+      fetchAll(cashEntriesQuery)
     ]);
     const itemsBySale = new Map();
     for (const item of items) {
@@ -145,6 +147,17 @@ export function createCloudStore(url, anonKey) {
         kind: movement.kind,
         reason: movement.reason,
         saleId: movement.sale_id
+      })),
+      cashEntries: cashEntries.map(entry => ({
+        id: entry.id,
+        direction: entry.direction,
+        description: entry.description,
+        counterparty: entry.counterparty ?? "",
+        category: entry.category,
+        amountCents: Number(entry.amount_cents),
+        dueDate: entry.due_date,
+        paymentMethod: entry.payment_method ?? "",
+        settledAt: entry.settled_at
       })),
       nextSale: sales.reduce((highest, sale) => Math.max(highest, Number(sale.sale_number)), 0) + 1
     };
@@ -214,6 +227,35 @@ export function createCloudStore(url, anonKey) {
     }
     if (Object.keys(storeChanges).length) {
       assertNoError(await client.from("stores").update(storeChanges).eq("id", storeId));
+    }
+
+    const previousCashEntries = new Map((previous.cashEntries ?? []).map(entry => [entry.id, entry]));
+    for (const entry of next.cashEntries ?? []) {
+      const old = previousCashEntries.get(entry.id);
+      if (!old) {
+        assertNoError(await client.from("cash_entries").insert({
+          id: entry.id,
+          store_id: storeId,
+          created_by: previous.user.id,
+          direction: entry.direction,
+          description: entry.description,
+          counterparty: entry.counterparty || null,
+          category: entry.category,
+          amount_cents: entry.amountCents,
+          due_date: entry.dueDate,
+          payment_method: entry.paymentMethod || null
+        }));
+      } else if (old.settledAt !== entry.settledAt) {
+        assertNoError(await client.from("cash_entries").update({
+          settled_at: entry.settledAt
+        }).eq("id", entry.id).eq("store_id", storeId));
+      }
+    }
+    const nextCashEntryIds = new Set((next.cashEntries ?? []).map(entry => entry.id));
+    for (const entry of previous.cashEntries ?? []) {
+      if (!nextCashEntryIds.has(entry.id)) {
+        assertNoError(await client.from("cash_entries").delete().eq("id", entry.id).eq("store_id", storeId));
+      }
     }
 
     const previousCategories = new Set(previous.categories);

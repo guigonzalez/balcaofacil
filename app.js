@@ -1,4 +1,5 @@
 import { createCloudStore } from "./cloud-store.js";
+import { cashEntryStatus, summarizeCashFlow } from "./cash-flow.js";
 import { parseKyteProductsCsv, parseKyteSalesCsv } from "./kyte-import.js";
 import { calculateSalesAnalytics, estimatePaymentFeeCents } from "./sales-analytics.js";
 
@@ -19,7 +20,8 @@ const icons = {
   chart: '<svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h17"/><path d="m7 14 4-4 3 2 6-7"/></svg>',
   coin: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15 8.5c-.7-.7-1.7-1-3-1-1.7 0-3 .8-3 2s1.1 1.8 3 2.3 3 1.1 3 2.5-1.3 2.3-3 2.3c-1.3 0-2.4-.4-3.2-1.1M12 5.5v13"/></svg>',
   trend: '<svg viewBox="0 0 24 24"><path d="M4 17 10 11l4 4 7-8"/><path d="M15 7h6v6"/></svg>',
-  bag: '<svg viewBox="0 0 24 24"><path d="M5 8h14l1 13H4L5 8Z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>'
+  bag: '<svg viewBox="0 0 24 24"><path d="M5 8h14l1 13H4L5 8Z"/><path d="M9 8a3 3 0 0 1 6 0"/></svg>',
+  cash: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M7 9h.01M17 15h.01"/></svg>'
 };
 const productArt = {
   "Caneca artesanal": ["☕", "thumb-yellow"],
@@ -72,6 +74,7 @@ function demoState() {
     products,
     customers,
     sales,
+    cashEntries: [],
     movements: [],
     nextSale: 1043
   };
@@ -102,6 +105,7 @@ function loadState() {
     .filter(category => typeof category === "string" && category.trim() && category !== "Todos"))];
   state.cardDebitFeePercent ??= 0;
   state.cardCreditFeePercent ??= 0;
+  state.cashEntries ??= [];
   return state;
 }
 
@@ -117,6 +121,8 @@ let salesFilter = "all";
 let salesPeriod = "all";
 let productFilter = "active";
 let analyticsPeriod = 30;
+let cashFlowView = "overview";
+let cashFlowFilter = "open";
 let toastTimer;
 let productPreviewUrl = "";
 let cloudStore = null;
@@ -314,6 +320,11 @@ function updateShell() {
     const key = element.dataset.icon;
     if (icons[key]) element.innerHTML = icons[key];
   });
+  $("#cashflow-nav").hidden = !canManageCashFlow();
+}
+
+function canManageCashFlow() {
+  return !state?.cloud || ["owner", "admin"].includes(state.role);
 }
 
 function pageHeading(eyebrow, title, subtitle, action = "") {
@@ -508,6 +519,62 @@ function renderSales() {
       <div class="table-wrap"><table><thead><tr><th>VENDA</th><th>CLIENTE</th><th>DATA E HORA</th><th>PAGAMENTO</th><th>VALOR</th><th>STATUS</th><th></th></tr></thead><tbody>${filtered.length ? filtered.map(sale => `<tr><td><strong>${escapeHTML(sale.id)}</strong>${sale.importReference ? `<div class="stock-sku">Kyte #${escapeHTML(sale.importReference)}</div>` : ""}</td><td>${escapeHTML(customerName(sale.customerId, sale.customerName))}</td><td>${escapeHTML(formatDate(sale.date, true))}</td><td>${escapeHTML(sale.payment)}</td><td><strong>${money(sale.total)}</strong></td><td><span class="status-pill${sale.status === "cancelled" ? " cancelled" : ""}">${sale.status === "completed" ? "Concluída" : "Cancelada"}</span></td><td>${sale.importSource ? `<button class="table-action" type="button" data-action="sale-details" data-id="${escapeHTML(sale.id)}">Detalhes</button>` : sale.status === "completed" ? `<button class="table-action danger" type="button" data-action="cancel-sale" data-id="${escapeHTML(sale.id)}">Cancelar</button>` : `<span class="customer-contact" title="${escapeHTML(sale.cancelReason)}">Devolvida</span>`}</td></tr>`).join("") : `<tr><td colspan="7"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Nenhuma venda encontrada</strong><p>Experimente buscar por outro termo.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "venda" : "vendas"} exibidas · faturamento considera somente vendas concluídas</div></section>`;
 }
 
+function cashEntryDueDate(value) {
+  const [year, month, day] = String(value).split("-").map(Number);
+  if (!year || !month || !day) return "—";
+  return DATE.format(new Date(year, month - 1, day));
+}
+
+function renderCashFlow() {
+  const entries = state.cashEntries ?? [];
+  const summary = summarizeCashFlow(entries);
+  const viewEntries = entries.filter(entry =>
+    cashFlowView === "overview" ||
+    (cashFlowView === "payables" && entry.direction === "payable") ||
+    (cashFlowView === "receivables" && entry.direction === "receivable")
+  );
+  const filtered = viewEntries
+    .filter(entry => cashFlowFilter === "all" ||
+      (cashFlowFilter === "open" ? !entry.settledAt : cashEntryStatus(entry) === cashFlowFilter))
+    .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.description.localeCompare(b.description, "pt-BR"));
+  const rows = filtered.map(entry => {
+    const status = cashEntryStatus(entry);
+    const statusLabel = status === "settled" ? "Quitada" : status === "overdue" ? "Vencida" : "Em aberto";
+    const directionLabel = entry.direction === "payable" ? "A pagar" : "A receber";
+    const partyLabel = entry.counterparty ? escapeHTML(entry.counterparty) : "—";
+    const paymentLabel = entry.paymentMethod ? escapeHTML(entry.paymentMethod) : "—";
+    const actions = status === "settled"
+      ? `<span class="cashflow-settled-date">Quitada em ${escapeHTML(formatDate(entry.settledAt))}</span>`
+      : `<div class="row-actions"><button class="table-action" type="button" data-action="settle-cash-entry" data-id="${escapeHTML(entry.id)}">Dar baixa</button><button class="table-action danger" type="button" data-action="delete-cash-entry" data-id="${escapeHTML(entry.id)}">Apagar</button></div>`;
+    return `<tr><td><strong>${escapeHTML(entry.description)}</strong><div class="stock-sku">${escapeHTML(entry.category)}</div></td><td>${directionLabel}</td><td>${partyLabel}</td><td>${escapeHTML(cashEntryDueDate(entry.dueDate))}</td><td>${paymentLabel}</td><td><strong>${money(entry.amountCents)}</strong></td><td><span class="status-pill cashflow-status ${status}">${statusLabel}</span></td><td>${actions}</td></tr>`;
+  }).join("");
+  const title = cashFlowView === "payables" ? "Contas a pagar"
+    : cashFlowView === "receivables" ? "Contas a receber"
+      : "Fluxo de caixa";
+  const subtitle = cashFlowView === "payables" ? "Organize compromissos e acompanhe os pagamentos."
+    : cashFlowView === "receivables" ? "Acompanhe valores previstos para receber e suas baixas."
+      : "Acompanhe compromissos, recebimentos e movimentações da loja.";
+  const action = `<button class="button button-primary" type="button" data-action="add-cash-entry"><span class="button-icon">＋</span> Novo lançamento</button>`;
+  const viewTabs = [
+    ["overview", "Visão geral"],
+    ["payables", "A pagar"],
+    ["receivables", "A receber"]
+  ].map(([view, label]) =>
+    `<button class="filter-tab${cashFlowView === view ? " is-selected" : ""}" type="button" data-cashflow-view="${view}">${label}</button>`
+  ).join("");
+  pageContent.innerHTML = `${pageHeading("CONTAS E MOVIMENTAÇÕES", title, subtitle, action)}
+    <div class="filter-tabs cashflow-tabs" role="group" aria-label="Seção do fluxo de caixa">${viewTabs}</div>
+    <div class="metric-grid cashflow-metrics">
+      <article class="metric-card"><div class="metric-top"><span>A pagar em aberto</span><span class="metric-icon">${iconMarkup("receipt")}</span></div><div class="metric-value">${money(summary.openPayablesCents)}</div><div class="metric-note">Contas ainda não quitadas</div></article>
+      <article class="metric-card"><div class="metric-top"><span>A receber em aberto</span><span class="metric-icon">${iconMarkup("coin")}</span></div><div class="metric-value">${money(summary.openReceivablesCents)}</div><div class="metric-note">Recebimentos ainda não quitados</div></article>
+      <article class="metric-card"><div class="metric-top"><span>Contas vencidas</span><span class="metric-icon">${iconMarkup("trend")}</span></div><div class="metric-value">${money(summary.overdueCents)}</div><div class="metric-note">${summary.overdueCount} ${summary.overdueCount === 1 ? "lançamento vencido" : "lançamentos vencidos"}</div></article>
+      <article class="metric-card"><div class="metric-top"><span>Saldo previsto em aberto</span><span class="metric-icon">${iconMarkup("bag")}</span></div><div class="metric-value">${money(summary.projectedBalanceCents)}</div><div class="metric-note">A receber menos a pagar · não é saldo bancário</div></article>
+    </div>
+    <section class="panel cashflow-month-summary"><div><span>Recebido este mês</span><strong>${money(summary.settledReceivablesThisMonthCents)}</strong></div><div><span>Pago este mês</span><strong>${money(summary.settledPayablesThisMonthCents)}</strong></div><div><span>Movimentação líquida do mês</span><strong>${money(summary.settledBalanceThisMonthCents)}</strong></div></section>
+    <section class="panel cashflow-list-panel"><div class="panel-header"><div><h2 class="panel-title">${title}</h2><p class="panel-subtitle">Lançamentos manuais · baixas integrais</p></div><select class="select-control" id="cashflow-status" aria-label="Filtrar situação"><option value="open"${cashFlowFilter === "open" ? " selected" : ""}>Em aberto</option><option value="overdue"${cashFlowFilter === "overdue" ? " selected" : ""}>Vencidas</option><option value="settled"${cashFlowFilter === "settled" ? " selected" : ""}>Quitadas</option><option value="all"${cashFlowFilter === "all" ? " selected" : ""}>Todas</option></select></div>
+      <div class="table-wrap"><table><thead><tr><th>DESCRIÇÃO / CATEGORIA</th><th>TIPO</th><th>PESSOA / EMPRESA</th><th>VENCIMENTO</th><th>FORMA</th><th>VALOR</th><th>SITUAÇÃO</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="8"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>${cashFlowFilter === "open" ? "Nenhuma conta em aberto" : "Nenhum lançamento encontrado"}</strong><p>Cadastre contas a pagar e receber para organizar o fluxo da loja.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "lançamento exibido" : "lançamentos exibidos"}</div></section>`;
+}
+
 function customerStats(customer) {
   const sales = state.sales.filter(sale => sale.customerId === customer.id && sale.status === "completed");
   return { count: sales.length, total: saleRevenue(sales), latest: sales.sort((a, b) => new Date(b.date) - new Date(a.date))[0] };
@@ -551,13 +618,15 @@ function renderPage() {
   if (currentPage === "pdv") renderPOS();
   else if (currentPage === "produtos") renderProducts();
   else if (currentPage === "vendas") renderSales();
+  else if (currentPage === "caixa" && canManageCashFlow()) renderCashFlow();
   else if (currentPage === "analises") renderAnalytics();
   else if (currentPage === "clientes") renderCustomers();
   else renderDashboard();
 }
 
 function navigate(page) {
-  if (!["inicio", "pdv", "produtos", "vendas", "analises", "clientes"].includes(page)) return;
+  if (!["inicio", "pdv", "produtos", "vendas", "caixa", "analises", "clientes"].includes(page)) return;
+  if (page === "caixa" && !canManageCashFlow()) return;
   currentPage = page;
   if (page !== "pdv") productQuery = "";
   renderPage();
@@ -663,6 +732,24 @@ function checkoutDialog() {
   openDialog("Finalizar venda", "Confira os itens e registre como o cliente pagou.", `<form id="checkout-form"><div class="checkout-summary">${items}<div class="checkout-summary-row total"><span>Total a pagar</span><strong>${money(total)}</strong></div></div>
     <div class="form-grid"><div class="form-field"><label for="checkout-payment">Forma de pagamento *</label><select id="checkout-payment" name="payment" required><option>Dinheiro</option><option>Pix</option><option>Cartão de débito</option><option>Cartão de crédito</option><option>Outro</option></select></div><div class="form-field"><label for="checkout-customer">Cliente</label><input id="checkout-customer" value="${escapeHTML(customer || "Venda sem cliente")}" disabled></div></div>
     <p class="field-hint checkout-fee-hint" id="checkout-fee-estimate" aria-live="polite">Este registro não processa pagamentos. O valor é recebido fora do sistema.</p><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Voltar</button><button class="button button-primary" type="submit">Confirmar venda · ${money(total)}</button></div></form>`);
+}
+
+function cashEntryDialog() {
+  const today = dayKey(new Date());
+  openDialog("Novo lançamento", "Registre manualmente uma conta a pagar ou receber.", `<form id="cash-entry-form"><div class="form-grid">
+    <div class="form-field full"><label for="cash-entry-direction">Tipo de conta *</label><select id="cash-entry-direction" name="direction" required><option value="payable">Conta a pagar</option><option value="receivable">Conta a receber</option></select></div>
+    <div class="form-field full"><label for="cash-entry-description">Descrição *</label><input id="cash-entry-description" name="description" required maxlength="120" placeholder="Ex.: Aluguel da loja"></div>
+    <div class="form-field"><label for="cash-entry-counterparty">Pessoa ou empresa</label><input id="cash-entry-counterparty" name="counterparty" maxlength="120" placeholder="Opcional"></div>
+    <div class="form-field"><label for="cash-entry-category">Categoria *</label><input id="cash-entry-category" name="category" required maxlength="60" placeholder="Ex.: Fornecedores"></div>
+    <div class="form-field"><label for="cash-entry-amount">Valor *</label><input id="cash-entry-amount" name="amount" inputmode="decimal" required placeholder="0,00"></div>
+    <div class="form-field"><label for="cash-entry-due-date">Vencimento *</label><input id="cash-entry-due-date" name="dueDate" type="date" required value="${today}"></div>
+    <div class="form-field full"><label for="cash-entry-payment">Forma de pagamento / recebimento</label><select id="cash-entry-payment" name="paymentMethod"><option value="">Não informado</option><option>Dinheiro</option><option>Pix</option><option>Cartão de débito</option><option>Cartão de crédito</option><option>Transferência</option><option>Outro</option></select></div>
+  </div><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Cancelar</button><button class="button button-primary" type="submit">Salvar lançamento</button></div></form>`);
+  $("#cash-entry-description").focus();
+}
+
+function deleteCashEntryDialog(entry) {
+  openDialog("Apagar lançamento", `Deseja apagar “${entry.description}”?`, `<p class="cashflow-delete-copy">Essa conta ainda está em aberto e será removida do fluxo de caixa.</p><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Manter</button><button class="button button-danger" type="button" data-action="confirm-delete-cash-entry" data-id="${escapeHTML(entry.id)}">Apagar lançamento</button></div>`);
 }
 
 function updateCheckoutFeeEstimate() {
@@ -907,6 +994,61 @@ async function completeSale(form) {
   cart = [];
   selectedCustomer = "";
   receiptDialog(state.sales.find(item => item.databaseId === sale.databaseId) ?? sale);
+}
+
+async function handleCashEntrySubmit(form) {
+  const data = new FormData(form);
+  const direction = String(data.get("direction") || "");
+  const description = String(data.get("description") || "").trim();
+  const counterparty = String(data.get("counterparty") || "").trim();
+  const category = String(data.get("category") || "").trim();
+  const amountCents = parseMoney(data.get("amount"));
+  const dueDate = String(data.get("dueDate") || "");
+  const paymentMethod = String(data.get("paymentMethod") || "");
+  const [year, month, day] = dueDate.split("-").map(Number);
+  const parsedDate = new Date(year, month - 1, day);
+  const dateIsValid = Boolean(year && month && day) &&
+    parsedDate.getFullYear() === year && parsedDate.getMonth() === month - 1 && parsedDate.getDate() === day;
+  const validPaymentMethods = ["", "Dinheiro", "Pix", "Cartão de débito", "Cartão de crédito", "Transferência", "Outro"];
+  if (!["payable", "receivable"].includes(direction) ||
+    !description || description.length > 120 ||
+    !category || category.length > 60 ||
+    !Number.isSafeInteger(amountCents) || amountCents <= 0 ||
+    !dateIsValid || !validPaymentMethods.includes(paymentMethod)) {
+    return showToast("Confira a descrição, categoria, valor, vencimento e forma de pagamento.", "error");
+  }
+
+  const current = structuredClone(state);
+  current.cashEntries ??= [];
+  current.cashEntries.push({
+    id: crypto.randomUUID(),
+    direction,
+    description,
+    counterparty,
+    category,
+    amountCents,
+    dueDate,
+    paymentMethod,
+    settledAt: null
+  });
+  if (await commit(current, "Lançamento adicionado ao fluxo de caixa.")) closeDialog();
+}
+
+async function settleCashEntry(id) {
+  const entry = state.cashEntries?.find(item => item.id === id);
+  if (!entry || entry.settledAt) return showToast("Este lançamento não está mais em aberto.", "error");
+  const current = structuredClone(state);
+  const currentEntry = current.cashEntries.find(item => item.id === id);
+  currentEntry.settledAt = new Date().toISOString();
+  if (await commit(current, "Baixa registrada no fluxo de caixa.")) closeDialog();
+}
+
+async function deleteCashEntry(id) {
+  const entry = state.cashEntries?.find(item => item.id === id);
+  if (!entry || entry.settledAt) return showToast("Somente contas em aberto podem ser apagadas.", "error");
+  const current = structuredClone(state);
+  current.cashEntries = current.cashEntries.filter(item => item.id !== id);
+  if (await commit(current, "Lançamento apagado do fluxo de caixa.")) closeDialog();
 }
 
 async function handleProductSubmit(form) {
@@ -1238,6 +1380,12 @@ document.addEventListener("click", async event => {
     navigate(pageButton.dataset.page);
     return;
   }
+  const cashFlowViewButton = event.target.closest("[data-cashflow-view]");
+  if (cashFlowViewButton) {
+    cashFlowView = cashFlowViewButton.dataset.cashflowView;
+    renderCashFlow();
+    return;
+  }
   const categoryButton = event.target.closest("[data-category]");
   if (categoryButton) {
     posCategory = categoryButton.dataset.category;
@@ -1256,6 +1404,12 @@ document.addEventListener("click", async event => {
   if (action === "close-dialog") closeDialog();
   else if (action === "receipt-done") { closeDialog(); navigate("vendas"); }
   else if (action === "settings") settingsDialog();
+  else if (action === "add-cash-entry" && canManageCashFlow()) cashEntryDialog();
+  else if (action === "settle-cash-entry" && canManageCashFlow()) await settleCashEntry(id);
+  else if (action === "delete-cash-entry" && canManageCashFlow()) {
+    const entry = state.cashEntries?.find(item => item.id === id);
+    if (entry && !entry.settledAt) deleteCashEntryDialog(entry);
+  } else if (action === "confirm-delete-cash-entry" && canManageCashFlow()) await deleteCashEntry(id);
   else if (action === "open-kyte-import") kyteImportDialog();
   else if (action === "back-kyte-import") kyteImportDialog();
   else if (action === "confirm-kyte-import") executeKyteImport(actionButton);
@@ -1364,6 +1518,8 @@ document.addEventListener("submit", async event => {
     const current = structuredClone(state);
     current.categories.push(name);
     if (await commit(current, `Categoria “${name}” cadastrada.`)) categoryManagerDialog();
+  } else if (formId === "cash-entry-form" && canManageCashFlow()) {
+    await handleCashEntrySubmit(event.target);
   } else if (formId === "product-form") await handleProductSubmit(event.target);
   else if (formId === "customer-form") await handleCustomerSubmit(event.target);
   else if (formId === "stock-form") await handleStockSubmit(event.target);
@@ -1443,6 +1599,9 @@ document.addEventListener("change", event => {
   } else if (event.target.id === "analytics-period") {
     analyticsPeriod = Number(event.target.value);
     renderAnalytics();
+  } else if (event.target.id === "cashflow-status") {
+    cashFlowFilter = event.target.value;
+    renderCashFlow();
   } else if (event.target.id === "checkout-payment") updateCheckoutFeeEstimate();
 });
 
