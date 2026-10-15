@@ -17,9 +17,28 @@ function saleProfit(sale) {
   return sale.items.reduce((total, item) => total + (item.cost === null ? 0 : (item.price - item.cost) * item.quantity), 0);
 }
 
-export function calculateSalesAnalytics(sales, days = 30, now = new Date()) {
+export function estimatePaymentFeeCents(totalCents, payment, feeRates = {}) {
+  if (!Number.isSafeInteger(totalCents) || totalCents < 0) {
+    throw new RangeError("O total da venda deve ser um valor inteiro de centavos não negativo.");
+  }
+  const rate = payment === "Cartão de débito"
+    ? feeRates.debitPercent ?? 0
+    : payment === "Cartão de crédito"
+      ? feeRates.creditPercent ?? 0
+      : 0;
+  if (typeof rate !== "number" || !Number.isFinite(rate) || rate < 0 || rate > 100) {
+    throw new RangeError("A taxa do cartão deve estar entre 0% e 100%.");
+  }
+  return Math.round(totalCents * rate / 100);
+}
+
+export function calculateSalesAnalytics(sales, days = 30, now = new Date(), feeRates = {}) {
   if (!PERIODS.has(days)) throw new RangeError("O período deve ser de 7, 30 ou 90 dias.");
 
+  const feeRateValues = [feeRates.debitPercent ?? 0, feeRates.creditPercent ?? 0];
+  if (feeRateValues.some(rate => typeof rate !== "number" || !Number.isFinite(rate) || rate < 0 || rate > 100)) {
+    throw new RangeError("As taxas de cartão devem estar entre 0% e 100%.");
+  }
   const end = startOfDay(now);
   const start = new Date(end);
   start.setDate(start.getDate() - days + 1);
@@ -29,6 +48,10 @@ export function calculateSalesAnalytics(sales, days = 30, now = new Date()) {
   });
   const completed = periodSales.filter(sale => sale.status === "completed");
   const revenueCents = completed.reduce((sum, sale) => sum + sale.total, 0);
+  const paymentFeeCents = completed.reduce((sum, sale) =>
+    sum + estimatePaymentFeeCents(sale.total, sale.payment, feeRates), 0);
+  const unestimatedLegacyCardCents = completed.reduce((sum, sale) =>
+    sum + (sale.payment === "Cartão" ? sale.total : 0), 0);
   const grossProfitCents = completed.reduce((sum, sale) => sum + saleProfit(sale), 0);
   const profitIsPartial = completed.some(sale =>
     (sale.importSource && (sale.importProfitCents === null || sale.importProfitCents === undefined)) ||
@@ -69,6 +92,10 @@ export function calculateSalesAnalytics(sales, days = 30, now = new Date()) {
     completedCount: completed.length,
     cancelledCount: periodSales.filter(sale => sale.status === "cancelled").length,
     revenueCents,
+    paymentFeeCents,
+    netRevenueCents: revenueCents - paymentFeeCents,
+    unestimatedLegacyCardCents,
+    paymentFeeIsPartial: unestimatedLegacyCardCents > 0,
     averageTicketCents: completed.length ? Math.round(revenueCents / completed.length) : 0,
     grossProfitCents,
     profitIsPartial,

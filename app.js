@@ -1,9 +1,10 @@
 import { createCloudStore } from "./cloud-store.js";
 import { parseKyteProductsCsv, parseKyteSalesCsv } from "./kyte-import.js";
-import { calculateSalesAnalytics } from "./sales-analytics.js";
+import { calculateSalesAnalytics, estimatePaymentFeeCents } from "./sales-analytics.js";
 
 const STORAGE_KEY = "balcao-mvp-v1";
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const PERCENT = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const DATE = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" });
 const FULL_DATE = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
 const icons = {
@@ -23,7 +24,7 @@ const icons = {
 const productArt = {
   "Caneca artesanal": ["☕", "thumb-yellow"],
   "Caderno pontilhado": ["📓", "thumb-blue"],
-  "Vela de capim-limão": ["🕯️", "thumb-green"],
+  "Vela de capim-limão": ["🕯️", "thumb-neutral"],
   "Ecobag algodão cru": ["👜", "thumb-pink"],
   "Sabonete de lavanda": ["🧼", "thumb-lilac"],
   "Garrafa térmica": ["🧴", "thumb-blue"],
@@ -62,7 +63,18 @@ function demoState() {
     { id: "VD-1041", date: localDayOffset(0), customerId: "c3", payment: "Pix", status: "completed", items: [{ productId: "p1", name: "Caneca artesanal", price: 6800, cost: 3200, quantity: 1 }, { productId: "p5", name: "Sabonete de lavanda", price: 1890, cost: 700, quantity: 2 }], total: 10580, cancelReason: "" },
     { id: "VD-1042", date: localDayOffset(0), customerId: "c4", payment: "Cartão", status: "completed", items: [{ productId: "p3", name: "Vela de capim-limão", price: 5200, cost: 2400, quantity: 1 }, { productId: "p6", name: "Garrafa térmica", price: 8900, cost: 4600, quantity: 1 }], total: 14100, cancelReason: "" }
   ];
-  return { version: 1, storeName: "Balcão da Vila", categories: [...defaultCategories], products, customers, sales, movements: [], nextSale: 1043 };
+  return {
+    version: 1,
+    storeName: "Balcão da Vila",
+    cardDebitFeePercent: 0,
+    cardCreditFeePercent: 0,
+    categories: [...defaultCategories],
+    products,
+    customers,
+    sales,
+    movements: [],
+    nextSale: 1043
+  };
 }
 
 function loadState() {
@@ -88,6 +100,8 @@ function loadState() {
     : [...defaultCategories, ...state.products.map(product => product.category)];
   state.categories = [...new Set([...storedCategories, ...state.products.map(product => product.category)]
     .filter(category => typeof category === "string" && category.trim() && category !== "Todos"))];
+  state.cardDebitFeePercent ??= 0;
+  state.cardCreditFeePercent ??= 0;
   return state;
 }
 
@@ -166,7 +180,7 @@ function initials(name) {
 }
 
 function artFor(name) {
-  return productArt[name] ?? ["📦", "thumb-green"];
+  return productArt[name] ?? ["📦", "thumb-neutral"];
 }
 
 function productImageSource(product) {
@@ -382,7 +396,10 @@ function analyticsChartMarkup(points) {
 }
 
 function renderAnalytics() {
-  const analysis = calculateSalesAnalytics(state.sales, analyticsPeriod);
+  const analysis = calculateSalesAnalytics(state.sales, analyticsPeriod, new Date(), {
+    debitPercent: Number(state.cardDebitFeePercent),
+    creditPercent: Number(state.cardCreditFeePercent)
+  });
   const paymentTotal = analysis.payments.reduce((sum, payment) => sum + payment.totalCents, 0);
   const paymentRows = analysis.payments.map(payment => {
     const share = paymentTotal ? payment.totalCents / paymentTotal : 0;
@@ -398,12 +415,15 @@ function renderAnalytics() {
   pageContent.innerHTML = `${pageHeading("DESEMPENHO DA LOJA", "Análises de vendas", "Acompanhe faturamento, ticket médio e o que mais vende.", action)}
     <section class="panel analytics-toolbar"><label for="analytics-period">Período</label><select class="select-control" id="analytics-period" aria-label="Período das análises"><option value="7"${analyticsPeriod === 7 ? " selected" : ""}>Últimos 7 dias</option><option value="30"${analyticsPeriod === 30 ? " selected" : ""}>Últimos 30 dias</option><option value="90"${analyticsPeriod === 90 ? " selected" : ""}>Últimos 90 dias</option></select><span>${formatDate(analysis.start)} – ${formatDate(analysis.end)}</span></section>
     <div class="metric-grid">
-      <article class="metric-card"><div class="metric-top"><span>Faturamento</span><span class="metric-icon">${iconMarkup("coin")}</span></div><div class="metric-value">${money(analysis.revenueCents)}</div><div class="metric-note">${analysis.completedCount} ${analysis.completedCount === 1 ? "venda concluída" : "vendas concluídas"}${analysis.cancelledCount ? ` · ${analysis.cancelledCount} canceladas excluídas` : ""}</div></article>
+      <article class="metric-card"><div class="metric-top"><span>Faturamento bruto</span><span class="metric-icon">${iconMarkup("coin")}</span></div><div class="metric-value">${money(analysis.revenueCents)}</div><div class="metric-note">${analysis.completedCount} ${analysis.completedCount === 1 ? "venda concluída" : "vendas concluídas"}${analysis.cancelledCount ? ` · ${analysis.cancelledCount} canceladas excluídas` : ""}</div></article>
+      <article class="metric-card"><div class="metric-top"><span>Taxas estimadas</span><span class="metric-icon">${iconMarkup("coin")}</span></div><div class="metric-value">${money(analysis.paymentFeeCents)}</div><div class="metric-note">${analysis.paymentFeeIsPartial ? "Cartões antigos sem tipo não incluídos" : "Somente débito e crédito"}</div></article>
+      <article class="metric-card"><div class="metric-top"><span>Líquido estimado</span><span class="metric-icon">${iconMarkup("trend")}</span></div><div class="metric-value">${money(analysis.netRevenueCents)}</div><div class="metric-note">Bruto menos taxas configuradas</div></article>
       <article class="metric-card"><div class="metric-top"><span>Vendas concluídas</span><span class="metric-icon">${iconMarkup("receipt")}</span></div><div class="metric-value">${analysis.completedCount}</div><div class="metric-note">Cancelamentos não entram no cálculo</div></article>
       <article class="metric-card"><div class="metric-top"><span>Ticket médio</span><span class="metric-icon">${iconMarkup("bag")}</span></div><div class="metric-value">${money(analysis.averageTicketCents)}</div><div class="metric-note">Faturamento dividido pelas vendas concluídas</div></article>
       <article class="metric-card"><div class="metric-top"><span>Lucro bruto estimado</span><span class="metric-icon">${iconMarkup("trend")}</span></div><div class="metric-value">${money(analysis.grossProfitCents)}</div><div class="metric-note">${analysis.profitIsPartial ? "Estimativa parcial · há custos não informados" : "Com base nos custos cadastrados"}</div></article>
     </div>
-    <section class="panel analytics-chart-panel"><div class="panel-header"><div><h2 class="panel-title">Faturamento ao longo do tempo</h2><p class="panel-subtitle">${periodLabel} · somente vendas concluídas</p></div><strong class="analytics-total">${money(analysis.revenueCents)}</strong></div><div class="analytics-chart-wrap">${analysis.completedCount ? analyticsChartMarkup(analysis.trend) : `<div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Sem vendas neste período</strong><p>As vendas concluídas vão aparecer neste gráfico.</p></div></div>`}</div></section>
+    <p class="analytics-footnote">Taxas são estimativas com base nos percentuais atuais da loja; vendas históricas identificadas apenas como “Cartão” não são classificadas como débito ou crédito.</p>
+    <section class="panel analytics-chart-panel"><div class="panel-header"><div><h2 class="panel-title">Faturamento ao longo do tempo</h2><p class="panel-subtitle">${periodLabel} · valores brutos das vendas concluídas</p></div><strong class="analytics-total">${money(analysis.revenueCents)}</strong></div><div class="analytics-chart-wrap">${analysis.completedCount ? analyticsChartMarkup(analysis.trend) : `<div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Sem vendas neste período</strong><p>As vendas concluídas vão aparecer neste gráfico.</p></div></div>`}</div></section>
     <div class="dashboard-grid analytics-detail-grid">
       <section class="panel"><div class="panel-header"><div><h2 class="panel-title">Vendas por pagamento</h2><p class="panel-subtitle">Distribuição do faturamento por forma</p></div></div><div class="analytics-breakdown">${paymentRows || `<div class="analytics-empty">Ainda não há vendas concluídas no período.</div>`}</div></section>
       <section class="panel"><div class="panel-header"><div><h2 class="panel-title">Produtos mais vendidos</h2><p class="panel-subtitle">Ordenados por unidades vendidas</p></div></div><div class="analytics-products">${productRows || `<div class="analytics-empty">Ainda não há itens de venda no período.</div>`}<p class="analytics-footnote">Vendas históricas importadas do Kyte não detalham itens por produto e não aparecem neste ranking.</p></div></section>
@@ -513,7 +533,7 @@ function renderPOS() {
   const total = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
   const productCards = available.map(product => {
     const [emoji, color] = artFor(product.name);
-    return `<button class="pos-product-card" type="button" data-action="add-to-cart" data-id="${escapeHTML(product.id)}" ${product.stock <= 0 ? "disabled" : ""}>${productImageSource(product) ? productThumbMarkup(product, "pos-product-emoji", color) : `<span class="pos-product-emoji ${color}">${emoji}</span>`}<span class="pos-product-name">${escapeHTML(product.name)}</span><span class="pos-product-bottom"><span class="pos-product-price">${money(product.price)}</span><span class="pos-product-stock">${product.stock > 0 ? `${product.stock} un.` : "Esgotado"}</span></span></button>`;
+    return `<button class="pos-product-card" type="button" data-action="add-to-cart" data-id="${escapeHTML(product.id)}" ${product.stock <= 0 ? "disabled" : ""}>${productImageSource(product) ? productThumbMarkup(product, "pos-product-visual product-photo", color) : `<span class="pos-product-visual ${color}"><span aria-hidden="true">${emoji}</span></span>`}<span class="pos-product-name">${escapeHTML(product.name)}</span><span class="pos-product-bottom"><span class="pos-product-price">${money(product.price)}</span><span class="pos-product-stock">${product.stock > 0 ? `${product.stock} un.` : "Esgotado"}</span></span></button>`;
   }).join("");
   const customerOptions = state.customers.map(customer => `<option value="${escapeHTML(customer.id)}"${selectedCustomer === customer.id ? " selected" : ""}>${escapeHTML(customer.name)}</option>`).join("");
   pageContent.innerHTML = `${pageHeading("VENDA PRESENCIAL", "Frente de caixa", "Toque em um produto para adicioná-lo à venda.", "")}
@@ -641,8 +661,25 @@ function checkoutDialog() {
   const customer = selectedCustomer ? state.customers.find(item => item.id === selectedCustomer)?.name : "";
   const items = cart.map(line => `<div class="checkout-summary-row"><span>${line.quantity}× ${escapeHTML(line.name)}</span><strong>${money(line.price * line.quantity)}</strong></div>`).join("");
   openDialog("Finalizar venda", "Confira os itens e registre como o cliente pagou.", `<form id="checkout-form"><div class="checkout-summary">${items}<div class="checkout-summary-row total"><span>Total a pagar</span><strong>${money(total)}</strong></div></div>
-    <div class="form-grid"><div class="form-field"><label for="checkout-payment">Forma de pagamento *</label><select id="checkout-payment" name="payment" required><option>Dinheiro</option><option>Pix</option><option>Cartão</option><option>Outro</option></select></div><div class="form-field"><label for="checkout-customer">Cliente</label><input id="checkout-customer" value="${escapeHTML(customer || "Venda sem cliente")}" disabled></div></div>
-    <p class="field-hint" style="margin-top:12px">Este registro não processa pagamentos. O valor é recebido fora do sistema.</p><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Voltar</button><button class="button button-primary" type="submit">Confirmar venda · ${money(total)}</button></div></form>`);
+    <div class="form-grid"><div class="form-field"><label for="checkout-payment">Forma de pagamento *</label><select id="checkout-payment" name="payment" required><option>Dinheiro</option><option>Pix</option><option>Cartão de débito</option><option>Cartão de crédito</option><option>Outro</option></select></div><div class="form-field"><label for="checkout-customer">Cliente</label><input id="checkout-customer" value="${escapeHTML(customer || "Venda sem cliente")}" disabled></div></div>
+    <p class="field-hint checkout-fee-hint" id="checkout-fee-estimate" aria-live="polite">Este registro não processa pagamentos. O valor é recebido fora do sistema.</p><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Voltar</button><button class="button button-primary" type="submit">Confirmar venda · ${money(total)}</button></div></form>`);
+}
+
+function updateCheckoutFeeEstimate() {
+  const payment = $("#checkout-payment")?.value;
+  const hint = $("#checkout-fee-estimate");
+  if (!hint) return;
+  if (payment !== "Cartão de débito" && payment !== "Cartão de crédito") {
+    hint.textContent = "Este registro não processa pagamentos. O valor é recebido fora do sistema.";
+    return;
+  }
+  const total = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  const rate = payment === "Cartão de débito" ? state.cardDebitFeePercent : state.cardCreditFeePercent;
+  const fee = estimatePaymentFeeCents(total, payment, {
+    debitPercent: Number(state.cardDebitFeePercent),
+    creditPercent: Number(state.cardCreditFeePercent)
+  });
+  hint.textContent = `Estimativa de taxa (${PERCENT.format(Number(rate))}%): ${money(fee)} · líquido estimado: ${money(total - fee)}. O sistema não processa o pagamento.`;
 }
 
 function receiptDialog(sale) {
@@ -666,6 +703,7 @@ function importedSaleDetailsDialog(sale) {
 
 function settingsDialog() {
   const cloudMode = Boolean(state.cloud);
+  const canEditSettings = state.role !== "attendant";
   const inviteForm = cloudMode && ["owner", "admin"].includes(state.role)
     ? `<form id="invite-form" class="invite-form"><p class="settings-section-title">Convidar alguém para a equipe</p><div class="form-grid"><div class="form-field"><label for="invite-email">E-mail *</label><input id="invite-email" name="email" required type="email" maxlength="254" placeholder="pessoa@email.com"></div><div class="form-field"><label for="invite-role">Acesso *</label><select id="invite-role" name="role"><option value="attendant">Atendente</option><option value="admin">Administrador</option></select></div></div><div class="dialog-actions"><button class="button button-primary" type="submit">Enviar convite</button></div></form>`
     : "";
@@ -673,12 +711,14 @@ function settingsDialog() {
   const storeNameControl = state.role === "attendant"
     ? `<div class="form-field"><label>Nome da loja</label><input value="${escapeHTML(state.storeName)}" disabled></div>`
     : `<div class="form-field"><label for="store-name-input">Nome da loja</label><input id="store-name-input" name="storeName" required maxlength="80" value="${escapeHTML(state.storeName)}"></div>`;
+  const feeSettings = `<div class="form-field"><label for="debit-fee-input">Taxa média de débito (%)</label><input id="debit-fee-input" name="cardDebitFeePercent" type="number" min="0" max="100" step="0.01" value="${Number(state.cardDebitFeePercent).toFixed(2)}"${canEditSettings ? "" : " disabled"}></div>
+    <div class="form-field"><label for="credit-fee-input">Taxa média de crédito (%)</label><input id="credit-fee-input" name="cardCreditFeePercent" type="number" min="0" max="100" step="0.01" value="${Number(state.cardCreditFeePercent).toFixed(2)}"${canEditSettings ? "" : " disabled"}></div>`;
   const description = cloudMode
     ? `${cloudUser?.email ?? ""} · ${state.role === "owner" ? "proprietário" : state.role === "admin" ? "administrador" : "atendente"}`
     : "Personalize a identificação da demonstração.";
   const descriptionNode = `<p>${escapeHTML(description)}</p>`;
   const importButton = state.role === "attendant" ? "" : `<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="open-kyte-import">Importar produtos e vendas do Kyte</button></div>`;
-  openDialog("Sua loja", "", `<form id="settings-form">${storeNameControl}${cloudMode ? "" : `<p class="field-hint" style="margin-top:12px">Seus dados ficam somente neste navegador. Para reiniciar a demonstração, use o botão abaixo.</p>`}<div class="dialog-actions" style="justify-content:space-between">${resetButton}<span style="display:flex;gap:8px"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button>${state.role === "attendant" ? "" : `<button class="button button-primary" type="submit">Salvar</button>`}</span></div></form>${importButton}${inviteForm}<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="sign-out">Sair da conta</button></div>`);
+  openDialog("Sua loja", "", `<form id="settings-form"><div class="form-grid">${storeNameControl}${feeSettings}</div><p class="field-hint" style="margin-top:12px">Percentuais editáveis usados apenas para estimar o custo das vendas no cartão. Não são taxas da adquirente nem alteram valores recebidos. Vendas antigas sem tipo de cartão não entram nesta estimativa.</p>${cloudMode ? "" : `<p class="field-hint" style="margin-top:12px">Seus dados ficam somente neste navegador. Para reiniciar a demonstração, use o botão abaixo.</p>`}<div class="dialog-actions" style="justify-content:space-between">${resetButton}<span style="display:flex;gap:8px"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button>${state.role === "attendant" ? "" : `<button class="button button-primary" type="submit">Salvar</button>`}</span></div></form>${importButton}${inviteForm}<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="sign-out">Sair da conta</button></div>`);
   $(".dialog-head p", dialogContent).textContent = descriptionNode.replace(/<[^>]+>/g, "");
 }
 
@@ -1021,7 +1061,7 @@ function showAuth(mode = "signin", message = "") {
     return;
   }
   const reset = mode === "reset";
-  authContent.innerHTML = `<p class="eyebrow">${reset ? "RECUPERAÇÃO DE ACESSO" : "BEM-VINDA À SUA LOJA"}</p><h1>${reset ? "Redefina sua senha" : "Entre no Balcão"}</h1><p class="auth-description">${reset ? "Enviaremos um link seguro para redefinir sua senha." : "Acesse sua loja com o convite que recebeu por e-mail."}</p>${notice}<form id="${reset ? "reset-password-form" : "signin-form"}" class="auth-form"><label for="auth-email">E-mail</label><input id="auth-email" name="email" required type="email" autocomplete="email" maxlength="254" placeholder="voce@email.com"><span class="auth-password-field"${reset ? ' hidden' : ""}><label for="auth-password">Senha</label><input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="10" placeholder="Sua senha"></span><button class="button button-primary" type="submit">${reset ? "Enviar link de recuperação" : "Entrar"}</button>${reset ? "" : `<button class="button button-secondary" type="button" data-action="send-magic-link">Receber link de acesso por e-mail</button>`}</form>${reset ? `<button class="auth-link" type="button" data-auth-mode="signin">Voltar ao acesso</button>` : `<button class="auth-link" type="button" data-auth-mode="reset">Esqueci minha senha</button>`}`;
+  authContent.innerHTML = `<p class="eyebrow">${reset ? "RECUPERAÇÃO DE ACESSO" : "BEM-VINDA À SUA LOJA"}</p><h1>${reset ? "Redefina sua senha" : "Entre no BalcãoFácil"}</h1><p class="auth-description">${reset ? "Enviaremos um link seguro para redefinir sua senha." : "Acesse sua loja com o convite que recebeu por e-mail."}</p>${notice}<form id="${reset ? "reset-password-form" : "signin-form"}" class="auth-form"><label for="auth-email">E-mail</label><input id="auth-email" name="email" required type="email" autocomplete="email" maxlength="254" placeholder="voce@email.com"><span class="auth-password-field"${reset ? ' hidden' : ""}><label for="auth-password">Senha</label><input id="auth-password" name="password" type="password" autocomplete="current-password" minlength="10" placeholder="Sua senha"></span><button class="button button-primary" type="submit">${reset ? "Enviar link de recuperação" : "Entrar"}</button>${reset ? "" : `<button class="button button-secondary" type="button" data-action="send-magic-link">Receber link de acesso por e-mail</button>`}</form>${reset ? `<button class="auth-link" type="button" data-auth-mode="signin">Voltar ao acesso</button>` : `<button class="auth-link" type="button" data-auth-mode="reset">Esqueci minha senha</button>`}`;
 }
 
 async function activateCloudUser(user) {
@@ -1330,11 +1370,21 @@ document.addEventListener("submit", async event => {
   else if (formId === "checkout-form") await completeSale(event.target);
   else if (formId === "cancel-sale-form") await handleCancelSale(event.target);
   else if (formId === "settings-form") {
-    const name = String(new FormData(event.target).get("storeName") || "").trim();
-    if (!name) return showToast("Informe o nome da loja.", "error");
+    const data = new FormData(event.target);
+    const name = String(data.get("storeName") || "").trim();
+    const debitFee = Number(data.get("cardDebitFeePercent"));
+    const creditFee = Number(data.get("cardCreditFeePercent"));
+    if (state.role !== "attendant" && !name) return showToast("Informe o nome da loja.", "error");
+    if (![debitFee, creditFee].every(rate => Number.isFinite(rate) && rate >= 0 && rate <= 100)) {
+      return showToast("Informe taxas entre 0% e 100%.", "error");
+    }
     const current = structuredClone(state);
-    current.storeName = name;
-    if (await commit(current, "Nome da loja atualizado.")) closeDialog();
+    if (state.role !== "attendant") {
+      current.storeName = name;
+      current.cardDebitFeePercent = debitFee;
+      current.cardCreditFeePercent = creditFee;
+    }
+    if (await commit(current, "Configurações da loja atualizadas.")) closeDialog();
   }
 });
 
@@ -1393,7 +1443,7 @@ document.addEventListener("change", event => {
   } else if (event.target.id === "analytics-period") {
     analyticsPeriod = Number(event.target.value);
     renderAnalytics();
-  }
+  } else if (event.target.id === "checkout-payment") updateCheckoutFeeEstimate();
 });
 
 $("#mobile-menu").addEventListener("click", () => {
@@ -1424,7 +1474,7 @@ if (hasSupabaseConfig) {
     authScreen.hidden = true;
     appShell.hidden = false;
   } catch (error) {
-    console.error("Falha ao carregar os dados do Balcão.", error);
+    console.error("Falha ao carregar os dados do BalcãoFácil.", error);
     pageContent.innerHTML = `<section class="panel"><div class="empty-state"><div><span class="empty-symbol">!</span><strong>Não foi possível abrir os dados desta loja</strong><p>${escapeHTML(error.message)} Não removemos nem substituímos os dados salvos.</p><button class="button button-secondary" style="margin-top:15px" type="button" onclick="location.reload()">Tentar novamente</button></div></div></section>`;
   }
 }

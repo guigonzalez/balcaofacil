@@ -68,7 +68,7 @@ export function createCloudStore(url, anonKey) {
   async function loadStore(storeId, membership, user) {
     const store = assertNoError(await client
       .from("stores")
-      .select("id, name")
+      .select("id, name, card_debit_fee_percent, card_credit_fee_percent")
       .eq("id", storeId)
       .single());
 
@@ -124,6 +124,8 @@ export function createCloudStore(url, anonKey) {
       cloud: true,
       storeId: store.id,
       storeName: store.name,
+      cardDebitFeePercent: Number(store.card_debit_fee_percent),
+      cardCreditFeePercent: Number(store.card_credit_fee_percent),
       role: membership.role,
       user: {
         id: user.id,
@@ -202,8 +204,16 @@ export function createCloudStore(url, anonKey) {
     const storeId = previous.storeId;
     if (next.storeId !== storeId) throw new Error("A sessão da loja expirou. Entre novamente.");
 
-    if (previous.storeName !== next.storeName) {
-      assertNoError(await client.from("stores").update({ name: next.storeName }).eq("id", storeId));
+    const storeChanges = {};
+    if (previous.storeName !== next.storeName) storeChanges.name = next.storeName;
+    if (previous.cardDebitFeePercent !== next.cardDebitFeePercent) {
+      storeChanges.card_debit_fee_percent = next.cardDebitFeePercent;
+    }
+    if (previous.cardCreditFeePercent !== next.cardCreditFeePercent) {
+      storeChanges.card_credit_fee_percent = next.cardCreditFeePercent;
+    }
+    if (Object.keys(storeChanges).length) {
+      assertNoError(await client.from("stores").update(storeChanges).eq("id", storeId));
     }
 
     const previousCategories = new Set(previous.categories);

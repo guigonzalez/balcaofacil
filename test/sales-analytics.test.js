@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculateSalesAnalytics } from "../sales-analytics.js";
+import { calculateSalesAnalytics, estimatePaymentFeeCents } from "../sales-analytics.js";
 
 const today = new Date(2026, 9, 15, 12);
 
@@ -45,4 +45,34 @@ test("ranks itemized products by units sold and computes their item revenue", ()
 
 test("rejects unsupported analysis periods", () => {
   assert.throws(() => calculateSalesAnalytics([], 14, today), RangeError);
+});
+
+test("estimates card fees by debit and credit rate, rounded to cents", () => {
+  assert.equal(estimatePaymentFeeCents(1250, "Cartão de débito", { debitPercent: 1.5 }), 19);
+  assert.equal(estimatePaymentFeeCents(1250, "Cartão de crédito", { creditPercent: 2.4 }), 30);
+  assert.equal(estimatePaymentFeeCents(1250, "Pix", { debitPercent: 1.5, creditPercent: 2.4 }), 0);
+  assert.equal(estimatePaymentFeeCents(1250, "Cartão", { debitPercent: 1.5, creditPercent: 2.4 }), 0);
+  assert.equal(estimatePaymentFeeCents(1250, "Cartão de crédito"), 0);
+});
+
+test("separates gross revenue, estimated card fees, and net revenue", () => {
+  const result = calculateSalesAnalytics([
+    { date: today, status: "completed", total: 10001, payment: "Cartão de débito", items: [] },
+    { date: today, status: "completed", total: 10001, payment: "Cartão de crédito", items: [] },
+    { date: today, status: "completed", total: 3000, payment: "Cartão", items: [] },
+    { date: today, status: "completed", total: 1000, payment: "Dinheiro", items: [] },
+    { date: today, status: "cancelled", total: 5000, payment: "Cartão de crédito", items: [] }
+  ], 30, today, { debitPercent: 1.5, creditPercent: 2 });
+
+  assert.equal(result.revenueCents, 24002);
+  assert.equal(result.paymentFeeCents, 350);
+  assert.equal(result.netRevenueCents, 23652);
+  assert.equal(result.unestimatedLegacyCardCents, 3000);
+  assert.equal(result.paymentFeeIsPartial, true);
+});
+
+test("rejects invalid fee rates and sale amounts", () => {
+  assert.throws(() => estimatePaymentFeeCents(100, "Cartão de crédito", { creditPercent: 101 }), RangeError);
+  assert.throws(() => estimatePaymentFeeCents(-1, "Dinheiro"), RangeError);
+  assert.throws(() => calculateSalesAnalytics([], 30, today, { debitPercent: Number.NaN }), RangeError);
 });
