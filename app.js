@@ -1,4 +1,5 @@
 import { createCloudStore } from "./cloud-store.js";
+import { parseKyteProductsCsv, parseKyteSalesCsv } from "./kyte-import.js";
 
 const STORAGE_KEY = "balcao-mvp-v1";
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -109,6 +110,8 @@ let authActivation = 0;
 let authNeedsPassword = false;
 let authNotice = "";
 let authMode = "signin";
+let kyteImportPlan = null;
+let kyteImportBusy = false;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -270,8 +273,8 @@ function iconMarkup(name) {
   return icons[name] ?? "";
 }
 
-function customerName(id) {
-  return state.customers.find(customer => customer.id === id)?.name ?? "Venda sem cliente";
+function customerName(id, fallback = "") {
+  return state.customers.find(customer => customer.id === id)?.name ?? (fallback || "Venda sem cliente");
 }
 
 function todaySales() {
@@ -288,7 +291,7 @@ function recentSalesTable(sales, limit = 5) {
   if (!rows.length) return `<div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Nenhuma venda por aqui</strong><p>Assim que você registrar uma venda, ela aparece aqui.</p></div></div>`;
   return `<div class="table-wrap"><table><thead><tr><th>VENDA</th><th>CLIENTE</th><th>DATA E HORA</th><th>PAGAMENTO</th><th>VALOR</th><th>STATUS</th></tr></thead><tbody>${rows.map(sale => `<tr>
     <td><strong>${escapeHTML(sale.id)}</strong></td>
-    <td>${escapeHTML(customerName(sale.customerId))}</td>
+    <td>${escapeHTML(customerName(sale.customerId, sale.customerName))}</td>
     <td>${escapeHTML(formatDate(sale.date, true))}</td>
     <td>${escapeHTML(sale.payment)}</td>
     <td><strong>${money(sale.total)}</strong></td>
@@ -330,8 +333,10 @@ function renderDashboard() {
   const revenue = saleRevenue(today);
   const activeProducts = state.products.filter(product => product.active);
   const lowProducts = activeProducts.filter(product => product.stock <= product.lowStock).sort((a, b) => a.stock - b.stock);
-  const missingCost = today.some(sale => sale.status === "completed" && sale.items.some(item => item.cost === null));
-  const grossProfit = completedToday.reduce((sum, sale) => sum + sale.items.reduce((sub, item) => sub + (item.cost === null ? 0 : (item.price - item.cost) * item.quantity), 0), 0);
+  const missingCost = today.some(sale => sale.status === "completed" && (sale.importSource && sale.importProfitCents === null || sale.items.some(item => item.cost === null)));
+  const grossProfit = completedToday.reduce((sum, sale) => sum + (sale.importProfitCents !== null && sale.importProfitCents !== undefined
+    ? sale.importProfitCents
+    : sale.items.reduce((sub, item) => sub + (item.cost === null ? 0 : (item.price - item.cost) * item.quantity), 0)), 0);
   const salesWeek = state.sales.filter(sale => new Date(sale.date) >= new Date(Date.now() - 6 * 86400000));
   const weekTotal = saleRevenue(salesWeek);
   const topItems = new Map();
@@ -379,7 +384,7 @@ function renderProducts() {
 function renderSales() {
   const filtered = [...state.sales].filter(sale => {
     const statusMatches = salesFilter === "all" || sale.status === salesFilter;
-    const queryMatches = `${sale.id} ${customerName(sale.customerId)} ${sale.payment}`.toLocaleLowerCase("pt-BR").includes(salesQuery.toLocaleLowerCase("pt-BR"));
+    const queryMatches = `${sale.id} ${sale.importReference ?? ""} ${sale.importDetails ?? ""} ${customerName(sale.customerId, sale.customerName)} ${sale.payment}`.toLocaleLowerCase("pt-BR").includes(salesQuery.toLocaleLowerCase("pt-BR"));
     const periodStart = new Date();
     periodStart.setHours(0, 0, 0, 0);
     if (salesPeriod === "7d") periodStart.setDate(periodStart.getDate() - 6);
@@ -394,7 +399,7 @@ function renderSales() {
     <div class="detail-strip"><div class="detail-stat"><span>Vendas concluídas</span><strong>${state.sales.filter(sale => sale.status === "completed").length}</strong></div><div class="detail-stat"><span>Faturamento total</span><strong>${money(saleRevenue(state.sales))}</strong></div><div class="detail-stat"><span>Cancelamentos</span><strong>${state.sales.filter(sale => sale.status === "cancelled").length}</strong></div></div>
     <section class="panel"><div class="list-toolbar"><label class="search-box">${iconMarkup("search")}<input id="sales-search" type="search" placeholder="Buscar venda ou cliente..." value="${escapeHTML(salesQuery)}" aria-label="Buscar venda ou cliente"></label><span class="toolbar-spacer"></span><select class="select-control" id="sales-period" aria-label="Filtrar por período"><option value="all"${salesPeriod === "all" ? " selected" : ""}>Qualquer data</option><option value="today"${salesPeriod === "today" ? " selected" : ""}>Hoje</option><option value="7d"${salesPeriod === "7d" ? " selected" : ""}>Últimos 7 dias</option><option value="30d"${salesPeriod === "30d" ? " selected" : ""}>Últimos 30 dias</option></select></div>
       <div class="filter-tabs" role="group" aria-label="Filtrar vendas"><button class="filter-tab${salesFilter === "all" ? " is-selected" : ""}" type="button" data-sales-filter="all">Todas</button><button class="filter-tab${salesFilter === "completed" ? " is-selected" : ""}" type="button" data-sales-filter="completed">Concluídas</button><button class="filter-tab${salesFilter === "cancelled" ? " is-selected" : ""}" type="button" data-sales-filter="cancelled">Canceladas</button></div>
-      <div class="table-wrap"><table><thead><tr><th>VENDA</th><th>CLIENTE</th><th>DATA E HORA</th><th>PAGAMENTO</th><th>VALOR</th><th>STATUS</th><th></th></tr></thead><tbody>${filtered.length ? filtered.map(sale => `<tr><td><strong>${escapeHTML(sale.id)}</strong></td><td>${escapeHTML(customerName(sale.customerId))}</td><td>${escapeHTML(formatDate(sale.date, true))}</td><td>${escapeHTML(sale.payment)}</td><td><strong>${money(sale.total)}</strong></td><td><span class="status-pill${sale.status === "cancelled" ? " cancelled" : ""}">${sale.status === "completed" ? "Concluída" : "Cancelada"}</span></td><td>${sale.status === "completed" ? `<button class="table-action danger" type="button" data-action="cancel-sale" data-id="${escapeHTML(sale.id)}">Cancelar</button>` : `<span class="customer-contact" title="${escapeHTML(sale.cancelReason)}">Devolvida</span>`}</td></tr>`).join("") : `<tr><td colspan="7"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Nenhuma venda encontrada</strong><p>Experimente buscar por outro termo.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "venda" : "vendas"} exibidas · faturamento considera somente vendas concluídas</div></section>`;
+      <div class="table-wrap"><table><thead><tr><th>VENDA</th><th>CLIENTE</th><th>DATA E HORA</th><th>PAGAMENTO</th><th>VALOR</th><th>STATUS</th><th></th></tr></thead><tbody>${filtered.length ? filtered.map(sale => `<tr><td><strong>${escapeHTML(sale.id)}</strong>${sale.importReference ? `<div class="stock-sku">Kyte #${escapeHTML(sale.importReference)}</div>` : ""}</td><td>${escapeHTML(customerName(sale.customerId, sale.customerName))}</td><td>${escapeHTML(formatDate(sale.date, true))}</td><td>${escapeHTML(sale.payment)}</td><td><strong>${money(sale.total)}</strong></td><td><span class="status-pill${sale.status === "cancelled" ? " cancelled" : ""}">${sale.status === "completed" ? "Concluída" : "Cancelada"}</span></td><td>${sale.importSource ? `<button class="table-action" type="button" data-action="sale-details" data-id="${escapeHTML(sale.id)}">Detalhes</button>` : sale.status === "completed" ? `<button class="table-action danger" type="button" data-action="cancel-sale" data-id="${escapeHTML(sale.id)}">Cancelar</button>` : `<span class="customer-contact" title="${escapeHTML(sale.cancelReason)}">Devolvida</span>`}</td></tr>`).join("") : `<tr><td colspan="7"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Nenhuma venda encontrada</strong><p>Experimente buscar por outro termo.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "venda" : "vendas"} exibidas · faturamento considera somente vendas concluídas</div></section>`;
 }
 
 function customerStats(customer) {
@@ -534,6 +539,14 @@ function cancelSaleDialog(sale) {
   $("#cancel-reason").focus();
 }
 
+function importedSaleDetailsDialog(sale) {
+  const details = sale.importDetails || "O arquivo não informou os itens desta venda.";
+  const profit = sale.importProfitCents === null || sale.importProfitCents === undefined
+    ? "Não informado"
+    : money(sale.importProfitCents);
+  openDialog(`Venda Kyte #${sale.importReference}`, "Histórico importado. Esta operação não alterou o estoque.", `<dl class="import-sale-details"><dt>Data</dt><dd>${escapeHTML(formatDate(sale.date, true))}</dd><dt>Cliente</dt><dd>${escapeHTML(customerName(sale.customerId, sale.customerName))}</dd><dt>Pagamento</dt><dd>${escapeHTML(sale.payment)}</dd><dt>Quantidade de itens</dt><dd>${sale.importItemCount ?? "—"}</dd><dt>Total</dt><dd><strong>${money(sale.total)}</strong></dd><dt>Lucro informado pelo Kyte</dt><dd>${escapeHTML(profit)}</dd></dl><div class="import-sale-description"><strong>Descrição original dos itens</strong><p>${escapeHTML(details)}</p></div><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button></div>`);
+}
+
 function settingsDialog() {
   const cloudMode = Boolean(state.cloud);
   const inviteForm = cloudMode && ["owner", "admin"].includes(state.role)
@@ -547,8 +560,138 @@ function settingsDialog() {
     ? `${cloudUser?.email ?? ""} · ${state.role === "owner" ? "proprietário" : state.role === "admin" ? "administrador" : "atendente"}`
     : "Personalize a identificação da demonstração.";
   const descriptionNode = `<p>${escapeHTML(description)}</p>`;
-  openDialog("Sua loja", "", `<form id="settings-form">${storeNameControl}${cloudMode ? "" : `<p class="field-hint" style="margin-top:12px">Seus dados ficam somente neste navegador. Para reiniciar a demonstração, use o botão abaixo.</p>`}<div class="dialog-actions" style="justify-content:space-between">${resetButton}<span style="display:flex;gap:8px"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button>${state.role === "attendant" ? "" : `<button class="button button-primary" type="submit">Salvar</button>`}</span></div></form>${inviteForm}<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="sign-out">Sair da conta</button></div>`);
+  const importButton = state.role === "attendant" ? "" : `<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="open-kyte-import">Importar produtos e vendas do Kyte</button></div>`;
+  openDialog("Sua loja", "", `<form id="settings-form">${storeNameControl}${cloudMode ? "" : `<p class="field-hint" style="margin-top:12px">Seus dados ficam somente neste navegador. Para reiniciar a demonstração, use o botão abaixo.</p>`}<div class="dialog-actions" style="justify-content:space-between">${resetButton}<span style="display:flex;gap:8px"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button>${state.role === "attendant" ? "" : `<button class="button button-primary" type="submit">Salvar</button>`}</span></div></form>${importButton}${inviteForm}<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="sign-out">Sair da conta</button></div>`);
   $(".dialog-head p", dialogContent).textContent = descriptionNode.replace(/<[^>]+>/g, "");
+}
+
+function kyteImportDialog(error = "") {
+  kyteImportPlan = null;
+  const errorMessage = error ? `<p class="auth-message import-error" role="alert">${escapeHTML(error)}</p>` : "";
+  openDialog("Importar do Kyte", "Escolha um ou os dois arquivos CSV exportados pelo Kyte.", `<form id="kyte-import-form"><div class="form-field"><label for="kyte-products-file">Produtos (CSV)</label><input id="kyte-products-file" name="products" type="file" accept=".csv,text/csv"></div><div class="form-field import-file-field"><label for="kyte-sales-file">Vendas (CSV)</label><input id="kyte-sales-file" name="sales" type="file" accept=".csv,text/csv"></div>${errorMessage}<p class="field-hint import-notice">A importação adiciona registros e não altera produtos existentes nem o estoque por causa das vendas históricas. Você poderá revisar os dados antes de confirmar.</p><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Cancelar</button><button class="button button-primary" type="submit">Ler arquivos</button></div></form>`);
+}
+
+function renderKyteImportPreview(plan, extraSkippedProducts = 0) {
+  kyteImportPlan = plan;
+  const zeroTotalSales = plan.sales?.records.filter(sale => sale.totalCents === 0).length ?? 0;
+  const productsSummary = plan.products
+    ? `<li><strong>${plan.products.records.length}</strong> produtos para importar <span>(${plan.products.rowCount} linhas)</span>${extraSkippedProducts ? `<small>${extraSkippedProducts} ignorados por SKU já cadastrado</small>` : ""}</li>`
+    : "";
+  const salesSummary = plan.sales
+    ? `<li><strong>${plan.sales.records.length}</strong> vendas encontradas <span>(${plan.sales.rowCount} linhas)</span><small>Totais, datas, forma de pagamento e detalhes originais serão mantidos. O estoque não será alterado.${zeroTotalSales ? ` ${zeroTotalSales} vendas com total zero serão preservadas.` : ""}</small></li>`
+    : "";
+  const negativeStockWarning = plan.products?.negativeStockProducts.length
+    ? `<p class="import-warning">${plan.products.negativeStockProducts.length} produtos têm estoque negativo no CSV e serão importados com estoque zero: ${plan.products.negativeStockProducts.map(escapeHTML).join(", ")}.</p>`
+    : "";
+  const preview = `<ul class="import-preview-list">${productsSummary}${salesSummary}</ul>${negativeStockWarning}<p class="field-hint">A mesma exportação pode ser importada novamente sem duplicar os registros já importados.</p><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="back-kyte-import">Voltar</button><button class="button button-primary" type="button" data-action="confirm-kyte-import">Importar agora</button></div>`;
+  dialogContent.querySelector(".dialog-form").innerHTML = preview;
+}
+
+async function executeKyteImport(button) {
+  if (!kyteImportPlan || kyteImportBusy) return;
+  kyteImportBusy = true;
+  button.disabled = true;
+  button.textContent = "Importando…";
+  try {
+    let importedProducts = 0;
+    let skippedProducts = 0;
+    let importedSales = 0;
+    let skippedSales = 0;
+    if (state.cloud) {
+      skippedProducts = kyteImportPlan.products?.skippedSku ?? 0;
+      if (kyteImportPlan.products?.records.length) {
+        const result = await cloudStore.importKyteProducts(state.storeId, kyteImportPlan.products.records);
+        importedProducts = result.imported;
+        skippedProducts = result.skipped;
+      }
+      if (kyteImportPlan.sales?.records.length) {
+        const result = await cloudStore.importKyteSales(state.storeId, kyteImportPlan.sales.records);
+        importedSales = result.imported;
+        skippedSales = result.skipped;
+      }
+      const refreshed = await cloudStore.loadForUser(cloudUser);
+      if (refreshed.needsStore) throw new Error("Não foi possível localizar a loja após a importação.");
+      state = refreshed.state;
+      updateShell();
+      renderPage();
+    } else {
+      const current = structuredClone(state);
+      const categoryNames = new Set(current.categories.map(category => category.toLocaleLowerCase("pt-BR")));
+      skippedProducts = kyteImportPlan.products?.skippedSku ?? 0;
+      for (const product of kyteImportPlan.products?.records ?? []) {
+        if (current.products.some(existing => existing.importSourceKey === product.sourceKey)) {
+          skippedProducts += 1;
+          continue;
+        }
+        current.products.push({
+          id: crypto.randomUUID(),
+          name: product.name,
+          sku: product.sku,
+          category: product.category,
+          price: product.priceCents,
+          cost: product.costCents,
+          stock: product.stock,
+          lowStock: product.lowStock,
+          active: true,
+          importSourceKey: product.sourceKey
+        });
+        if (product.stock > 0) current.movements.push({
+          id: crypto.randomUUID(),
+          productId: current.products.at(-1).id,
+          date: new Date().toISOString(),
+          delta: product.stock,
+          kind: "entry",
+          reason: "Importação do Kyte"
+        });
+        if (!categoryNames.has(product.category.toLocaleLowerCase("pt-BR"))) {
+          current.categories.push(product.category);
+          categoryNames.add(product.category.toLocaleLowerCase("pt-BR"));
+        }
+        importedProducts += 1;
+      }
+      for (const sale of kyteImportPlan.sales?.records ?? []) {
+        if (current.sales.some(existing => existing.importSourceKey === sale.sourceKey)) {
+          skippedSales += 1;
+          continue;
+        }
+        current.sales.push({
+          id: `KY-${encodeURIComponent(sale.reference)}`,
+          date: sale.date,
+          customerId: "",
+          customerName: sale.customerName,
+          payment: sale.payment,
+          status: sale.status,
+          items: [],
+          total: sale.totalCents,
+          cancelReason: sale.status === "cancelled" ? "Status importado do Kyte" : "",
+          importSource: "Kyte",
+          importSourceKey: sale.sourceKey,
+          importReference: sale.reference,
+          importDetails: sale.details,
+          importItemCount: sale.itemCount,
+          importProfitCents: sale.profitCents
+        });
+        importedSales += 1;
+      }
+      if (!commit(current)) throw new Error("Não foi possível salvar os dados importados neste navegador.");
+    }
+
+    const message = [
+      importedProducts ? `${importedProducts} produtos importados` : "",
+      importedSales ? `${importedSales} vendas importadas` : "",
+      skippedProducts + skippedSales ? `${skippedProducts + skippedSales} registros já existentes ignorados` : ""
+    ].filter(Boolean).join(" · ") || "Todos os registros já haviam sido importados.";
+    closeDialog();
+    showToast(message);
+    kyteImportPlan = null;
+  } catch (error) {
+    console.error("Não foi possível concluir a importação do Kyte.", error);
+    showToast(error.message || "A importação falhou. Os registros já gravados podem ser ignorados com segurança ao tentar novamente.", "error");
+    button.disabled = false;
+    button.textContent = "Tentar novamente";
+  } finally {
+    kyteImportBusy = false;
+  }
 }
 
 function confirmResetDemo() {
@@ -923,6 +1066,13 @@ document.addEventListener("click", async event => {
   if (action === "close-dialog") closeDialog();
   else if (action === "receipt-done") { closeDialog(); navigate("vendas"); }
   else if (action === "settings") settingsDialog();
+  else if (action === "open-kyte-import") kyteImportDialog();
+  else if (action === "back-kyte-import") kyteImportDialog();
+  else if (action === "confirm-kyte-import") executeKyteImport(actionButton);
+  else if (action === "sale-details") {
+    const sale = state.sales.find(item => item.id === id && item.importSource);
+    if (sale) importedSaleDetailsDialog(sale);
+  }
   else if (action === "manage-categories") categoryManagerDialog();
   else if (action === "delete-category") {
     const productCount = state.products.filter(product => product.category === id).length;
@@ -989,6 +1139,32 @@ document.addEventListener("submit", async event => {
     }
   } else if (formId === "invite-form") {
     await inviteTeamMember(event.target);
+  } else if (formId === "kyte-import-form") {
+    try {
+      const data = new FormData(event.target);
+      const productsFile = data.get("products");
+      const salesFile = data.get("sales");
+      if (!(productsFile instanceof File) && !(salesFile instanceof File)) throw new Error("Selecione ao menos um arquivo CSV.");
+      const plan = {};
+      if (productsFile instanceof File && productsFile.size > 0) {
+        const parsed = parseKyteProductsCsv(await productsFile.text());
+        const existingSkus = new Set(state.products.map(product => product.sku.trim().toLocaleLowerCase("pt-BR")).filter(Boolean));
+        const records = parsed.records.filter(product => {
+          if (!product.sku || !existingSkus.has(product.sku.toLocaleLowerCase("pt-BR"))) return true;
+          parsed.skippedSku = (parsed.skippedSku ?? 0) + 1;
+          return false;
+        });
+        plan.products = { ...parsed, records };
+      }
+      if (salesFile instanceof File && salesFile.size > 0) {
+        plan.sales = parseKyteSalesCsv(await salesFile.text());
+      }
+      if (!plan.products && !plan.sales) throw new Error("Os arquivos selecionados estão vazios.");
+      renderKyteImportPreview(plan, plan.products?.skippedSku ?? 0);
+    } catch (error) {
+      console.error("Não foi possível ler os arquivos do Kyte.", error);
+      kyteImportDialog(error.message || "Não foi possível ler o arquivo CSV.");
+    }
   } else if (formId === "category-form") {
     const name = String(new FormData(event.target).get("name") || "").trim();
     if (!name || name.length > 40 || name.toLocaleLowerCase("pt-BR") === "todos") return showToast("Informe um nome de categoria válido (até 40 caracteres).", "error");

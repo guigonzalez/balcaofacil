@@ -19,6 +19,7 @@ async function fetchAll(query) {
 function mapProduct(row) {
   return {
     id: row.id,
+    importSourceKey: row.import_source_key ?? "",
     name: row.name,
     sku: row.sku ?? "",
     category: row.category,
@@ -98,11 +99,18 @@ export function createCloudStore(url, anonKey) {
       databaseId: sale.id,
       date: sale.created_at,
       customerId: sale.customer_id ?? "",
+      customerName: sale.import_customer_name ?? "",
       payment: sale.payment_method,
       status: sale.status,
       items: itemsBySale.get(sale.id) ?? [],
       total: Number(sale.total_cents),
-      cancelReason: sale.cancel_reason ?? ""
+      cancelReason: sale.cancel_reason ?? "",
+      importSourceKey: sale.import_source_key ?? "",
+      importSource: sale.import_source ?? "",
+      importReference: sale.import_reference ?? "",
+      importDetails: sale.import_details ?? "",
+      importItemCount: sale.import_item_count ?? null,
+      importProfitCents: sale.import_profit_cents ?? null
     }));
 
     return {
@@ -148,6 +156,40 @@ export function createCloudStore(url, anonKey) {
     const membership = await listMemberships(user.id);
     if (!membership || membership.store_id !== storeId) throw new Error("A loja foi criada, mas não foi possível confirmar o acesso da conta.");
     return loadStore(storeId, membership, user);
+  }
+
+  async function importKyteProducts(storeId, records) {
+    return assertNoError(await client.rpc("import_kyte_products", {
+      target_store_id: storeId,
+      import_records: records.map(product => ({
+        source_key: product.sourceKey,
+        name: product.name,
+        sku: product.sku || null,
+        category: product.category,
+        price_cents: product.priceCents,
+        cost_cents: product.costCents,
+        stock: product.stock,
+        low_stock: product.lowStock
+      }))
+    }));
+  }
+
+  async function importKyteSales(storeId, records) {
+    return assertNoError(await client.rpc("import_kyte_sales", {
+      target_store_id: storeId,
+      import_records: records.map(sale => ({
+        source_key: sale.sourceKey,
+        reference: sale.reference,
+        status: sale.status,
+        created_at: sale.date,
+        total_cents: sale.totalCents,
+        payment: sale.payment,
+        customer_name: sale.customerName,
+        details: sale.details,
+        item_count: sale.itemCount,
+        profit_cents: sale.profitCents
+      }))
+    }));
   }
 
   async function saveChanges(previous, next) {
@@ -268,5 +310,5 @@ export function createCloudStore(url, anonKey) {
     }
   }
 
-  return { client, loadForUser, createStore, loadStore, saveChanges };
+  return { client, loadForUser, createStore, loadStore, saveChanges, importKyteProducts, importKyteSales };
 }

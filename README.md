@@ -12,6 +12,8 @@ O projeto suporta execução local em demonstração e modo conectado à Vercel/
 
 - `supabase/migrations/20261014200000_initial_schema.sql`: esquema PostgreSQL, isolamento de dados por loja com RLS, papéis e operações transacionais de venda/cancelamento/estoque.
 - `supabase/migrations/20261015120000_product_categories.sql`: categorias por loja, permissões RLS e proteção contra exclusão de categorias ainda usadas por produtos.
+- `supabase/migrations/20261015130000_kyte_import.sql`: importação idempotente de produtos e vendas históricas do Kyte para lojas existentes.
+- `kyte-import.js`: leitor CSV com validação e conversão dos formatos de produto e venda exportados pelo Kyte.
 - `cloud-store.js`: leitura e escrita da loja autenticada; checkout, cancelamento e ajustes de estoque usam funções transacionais do banco.
 - `api/invite.js`: função de servidor Vercel para convidar usuários como administrador ou atendente. Usa a chave `service_role` somente no servidor e só permite convite por um administrador autenticado da loja.
 - `vite.config.js`: aceita `SUPABASE_URL`/`SUPABASE_ANON_KEY` (padrão das integrações Vercel/Supabase), `NEXT_PUBLIC_SUPABASE_*` ou `VITE_SUPABASE_*`. Somente a URL e a chave publishable/anon são incorporadas no bundle do navegador.
@@ -23,7 +25,7 @@ Quando a URL e a chave anon do Supabase estiverem disponíveis durante o build, 
 ### Preparar serviços para desenvolvimento
 
 1. Confirme no painel Vercel que a integração associou `SUPABASE_URL`, `SUPABASE_ANON_KEY` e `SUPABASE_SERVICE_ROLE_KEY` aos ambientes usados. A chave publishable/anon é pública; a `service_role` deve permanecer privada.
-2. No projeto Supabase associado, aplique as migrações em ordem usando **SQL Editor** ou Supabase CLI. Se a migração inicial já foi aplicada, execute apenas `supabase/migrations/20261015120000_product_categories.sql`. Revise as políticas de segurança na conta antes de usar dados reais.
+2. No projeto Supabase associado, aplique as migrações em ordem usando **SQL Editor** ou Supabase CLI. Se as migrações iniciais e de categorias já foram aplicadas, execute `supabase/migrations/20261015130000_kyte_import.sql` antes de usar o importador conectado. Revise as políticas de segurança na conta antes de usar dados reais.
 3. Em **Authentication → Settings → User Signups**, desative cadastro público. Configure o SMTP de produção e acrescente o domínio de produção e os domínios preview autorizados em **Authentication → URL Configuration → Redirect URLs**.
 4. Convide o primeiro proprietário pelo painel de Auth do Supabase. O dono entra pelo link recebido, define uma senha e cria o nome da primeira loja. Os membros seguintes entram apenas por convite enviado em **Configurações da loja**.
 5. Depois de qualquer alteração de variáveis, aplique-as aos ambientes Production/Preview necessários e faça um novo deploy; as variáveis `SUPABASE_URL` e `SUPABASE_ANON_KEY` são lidas no build do frontend.
@@ -38,6 +40,8 @@ npm run build
 ```
 
 `npm run dev` serve a interface Vite; para testar a função `/api/invite`, use Vercel CLI autenticada e `vercel dev`.
+
+Em **Configurações da loja → Importar produtos e vendas do Kyte**, selecione um ou os dois CSVs, revise a prévia e confirme. Produtos trazem nome, categoria, preço, custo, estoque atual e estoque mínimo; linhas sem categoria recebem “Sem categoria”. Vendas preservam referência, data, cliente textual, pagamento, total, lucro informado e descrição original dos itens; são importadas como histórico e **não alteram o estoque**. Novos registros não sobrescrevem cadastros existentes e reimportar a mesma exportação não duplica produtos ou vendas.
 
 ## Limites antes de produção
 
