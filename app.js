@@ -791,6 +791,12 @@ function importedSaleDetailsDialog(sale) {
 function settingsDialog() {
   const cloudMode = Boolean(state.cloud);
   const canEditSettings = state.role !== "attendant";
+  const accountDeletionSummary = state.role === "owner"
+    ? "Apagar sua conta remove seu acesso. Se outras pessoas ainda usam a loja, a propriedade passa ao membro elegível mais antigo; se você for a única pessoa, os dados da loja também serão apagados."
+    : "Apagar sua conta remove seu acesso à loja. Os dados da loja e os acessos dos demais membros permanecem.";
+  const deletionOptions = cloudMode
+    ? `<section class="destructive-settings"><p class="settings-section-title">Exclusão permanente</p><p>${accountDeletionSummary}</p>${state.role === "owner" ? `<button class="button button-danger button-small" type="button" data-action="delete-store">Apagar loja e todos os dados</button>` : ""}<button class="button button-danger button-small" type="button" data-action="delete-account">Apagar minha conta</button></section>`
+    : "";
   const inviteForm = cloudMode && ["owner", "admin"].includes(state.role)
     ? `<form id="invite-form" class="invite-form"><p class="settings-section-title">Convidar alguém para a equipe</p><div class="form-grid"><div class="form-field"><label for="invite-email">E-mail *</label><input id="invite-email" name="email" required type="email" maxlength="254" placeholder="pessoa@email.com"></div><div class="form-field"><label for="invite-role">Acesso *</label><select id="invite-role" name="role"><option value="attendant">Atendente</option><option value="admin">Administrador</option></select></div></div><div class="dialog-actions"><button class="button button-primary" type="submit">Enviar convite</button></div></form>`
     : "";
@@ -805,8 +811,68 @@ function settingsDialog() {
     : "Personalize a identificação da demonstração.";
   const descriptionNode = `<p>${escapeHTML(description)}</p>`;
   const importButton = state.role === "attendant" ? "" : `<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="open-kyte-import">Importar produtos e vendas do Kyte</button></div>`;
-  openDialog("Sua loja", "", `<form id="settings-form"><div class="form-grid">${storeNameControl}${feeSettings}</div><p class="field-hint" style="margin-top:12px">Percentuais editáveis usados apenas para estimar o custo das vendas no cartão. Não são taxas da adquirente nem alteram valores recebidos. Vendas antigas sem tipo de cartão não entram nesta estimativa.</p>${cloudMode ? "" : `<p class="field-hint" style="margin-top:12px">Seus dados ficam somente neste navegador. Para reiniciar a demonstração, use o botão abaixo.</p>`}<div class="dialog-actions" style="justify-content:space-between">${resetButton}<span style="display:flex;gap:8px"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button>${state.role === "attendant" ? "" : `<button class="button button-primary" type="submit">Salvar</button>`}</span></div></form>${importButton}${inviteForm}<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="sign-out">Sair da conta</button></div>`);
+  openDialog("Sua loja", "", `<form id="settings-form"><div class="form-grid">${storeNameControl}${feeSettings}</div><p class="field-hint" style="margin-top:12px">Percentuais editáveis usados apenas para estimar o custo das vendas no cartão. Não são taxas da adquirente nem alteram valores recebidos. Vendas antigas sem tipo de cartão não entram nesta estimativa.</p>${cloudMode ? "" : `<p class="field-hint" style="margin-top:12px">Seus dados ficam somente neste navegador. Para reiniciar a demonstração, use o botão abaixo.</p>`}<div class="dialog-actions" style="justify-content:space-between">${resetButton}<span style="display:flex;gap:8px"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button>${state.role === "attendant" ? "" : `<button class="button button-primary" type="submit">Salvar</button>`}</span></div></form>${importButton}${inviteForm}${deletionOptions}<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="sign-out">Sair da conta</button></div>`);
   $(".dialog-head p", dialogContent).textContent = descriptionNode.replace(/<[^>]+>/g, "");
+}
+
+function dataDeletionDialog(action) {
+  const deleteStore = action === "delete-store";
+  const confirmation = deleteStore ? state.storeName : cloudUser?.email ?? "";
+  const formId = deleteStore ? "delete-store-form" : "delete-account-form";
+  const targetLabel = deleteStore ? "nome exato da loja" : "e-mail da sua conta";
+  const message = deleteStore
+    ? "Todos os produtos, clientes, vendas, lançamentos financeiros e fotos serão apagados. As contas de login dos outros membros permanecem, mas perdem o acesso a esta loja."
+    : state.role === "owner"
+      ? "Sua conta será apagada permanentemente. A propriedade será transferida ao administrador mais antigo; se não houver administradores, ao atendente mais antigo. Se você for a única pessoa da loja, a loja e todos os seus dados também serão apagados."
+      : "Sua conta será apagada permanentemente e você perderá acesso à loja. A loja, os registros e os acessos dos demais membros serão mantidos.";
+  openDialog(deleteStore ? "Apagar loja e dados?" : "Apagar sua conta?", "Esta ação é permanente e não pode ser desfeita.", `<form id="${formId}" data-deletion-action="${action}" data-confirmation="${escapeHTML(confirmation)}"><p class="deletion-warning">${message}</p><div class="form-field"><label for="deletion-confirmation">Digite o ${targetLabel}: <strong>${escapeHTML(confirmation)}</strong></label><input id="deletion-confirmation" name="confirmation" required autocomplete="off" spellcheck="false"></div><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Cancelar</button><button class="button button-danger" type="submit" disabled>${deleteStore ? "Apagar loja" : "Apagar minha conta"}</button></div></form>`);
+  $("#deletion-confirmation").focus();
+}
+
+async function submitDataDeletion(form) {
+  const button = form.querySelector('button[type="submit"]');
+  const action = form.dataset.deletionAction;
+  const confirmation = String(new FormData(form).get("confirmation") ?? "");
+  const expected = form.dataset.confirmation ?? "";
+  const matches = action === "delete-account"
+    ? confirmation.trim().toLocaleLowerCase("en-US") === expected.trim().toLocaleLowerCase("en-US")
+    : confirmation.trim() === expected.trim();
+  if (!expected || !matches) {
+    return showToast("A confirmação não corresponde ao texto solicitado.", "error");
+  }
+  button.disabled = true;
+  try {
+    const { data, error } = await cloudStore.client.auth.getSession();
+    if (error) throw error;
+    if (!data.session) throw new Error("Sua sessão expirou. Entre novamente e tente outra vez.");
+    const response = await fetch("/api/delete-account", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${data.session.access_token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ action, confirmation })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Não foi possível concluir a exclusão.");
+    const message = action === "delete-store"
+      ? "A loja e seus dados foram apagados. Sua conta permanece ativa."
+      : result.storeDeleted
+        ? "Sua conta, a loja e os dados foram apagados."
+        : "Sua conta foi apagada e a propriedade da loja foi transferida.";
+    const warning = result.warning ? ` ${result.warning}` : "";
+    const { error: signOutError } = await cloudStore.client.auth.signOut({ scope: "local" });
+    if (signOutError) console.error("Os dados foram apagados, mas a sessão local não pôde ser encerrada.", signOutError);
+    closeDialog();
+    state = null;
+    cloudUser = null;
+    storeRole = null;
+    showAuth("signin", `${message}${warning}`);
+  } catch (error) {
+    console.error("Não foi possível concluir a exclusão solicitada.", error);
+    showToast(error.message || "Não foi possível concluir a exclusão.", "error");
+    button.disabled = false;
+  }
 }
 
 function kyteImportDialog(error = "") {
@@ -1404,6 +1470,8 @@ document.addEventListener("click", async event => {
   if (action === "close-dialog") closeDialog();
   else if (action === "receipt-done") { closeDialog(); navigate("vendas"); }
   else if (action === "settings") settingsDialog();
+  else if (action === "delete-store" && state?.role === "owner") dataDeletionDialog("delete-store");
+  else if (action === "delete-account" && state?.cloud) dataDeletionDialog("delete-account");
   else if (action === "add-cash-entry" && canManageCashFlow()) cashEntryDialog();
   else if (action === "settle-cash-entry" && canManageCashFlow()) await settleCashEntry(id);
   else if (action === "delete-cash-entry" && canManageCashFlow()) {
@@ -1474,7 +1542,9 @@ document.addEventListener("click", async event => {
 document.addEventListener("submit", async event => {
   event.preventDefault();
   const formId = event.target.getAttribute("id");
-  if (formId === "signin-form" || formId === "setup-store-form" || formId === "set-password-form" || formId === "reset-password-form") {
+  if (formId === "delete-store-form" || formId === "delete-account-form") {
+    await submitDataDeletion(event.target);
+  } else if (formId === "signin-form" || formId === "setup-store-form" || formId === "set-password-form" || formId === "reset-password-form") {
     try {
       await handleAuthSubmit(event.target);
     } catch (error) {
@@ -1547,6 +1617,18 @@ document.addEventListener("submit", async event => {
 document.addEventListener("click", event => {
   const modeButton = event.target.closest("[data-auth-mode]");
   if (modeButton) showAuth(modeButton.dataset.authMode);
+});
+
+document.addEventListener("input", event => {
+  if (event.target.id !== "deletion-confirmation") return;
+  const form = event.target.form;
+  const expected = form?.dataset.confirmation ?? "";
+  const actual = event.target.value.trim();
+  const matches = form?.dataset.deletionAction === "delete-account"
+    ? actual.toLocaleLowerCase("en-US") === expected.trim().toLocaleLowerCase("en-US")
+    : actual === expected.trim();
+  const button = form?.querySelector('button[type="submit"]');
+  if (button) button.disabled = !matches;
 });
 
 document.addEventListener("input", event => {
