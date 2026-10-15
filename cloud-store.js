@@ -110,6 +110,10 @@ export function createCloudStore(url, anonKey) {
       status: sale.status,
       items: itemsBySale.get(sale.id) ?? [],
       total: Number(sale.total_cents),
+      subtotalCents: Number(sale.subtotal_cents ?? sale.total_cents),
+      discountCents: Number(sale.discount_cents ?? 0),
+      discountType: sale.discount_type ?? "none",
+      discountValue: Number(sale.discount_value ?? 0),
       cancelReason: sale.cancel_reason ?? "",
       importSourceKey: sale.import_source_key ?? "",
       importSource: sale.import_source ?? "",
@@ -392,7 +396,9 @@ export function createCloudStore(url, anonKey) {
           requested_items: sale.items.map(item => ({
             product_id: item.productId,
             quantity: item.quantity
-          }))
+          })),
+          requested_discount_type: sale.discountType ?? "none",
+          requested_discount_value: sale.discountValue ?? 0
         }));
         sale.databaseId = createdSale.id;
         sale.id = `VD-${createdSale.sale_number}`;

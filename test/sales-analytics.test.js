@@ -71,6 +71,28 @@ test("separates gross revenue, estimated card fees, and net revenue", () => {
   assert.equal(result.paymentFeeIsPartial, true);
 });
 
+test("reports gross revenue before discounts and subtracts discounts from profit", () => {
+  const result = calculateSalesAnalytics([
+    {
+      date: today,
+      status: "completed",
+      total: 900,
+      discountCents: 100,
+      payment: "Cartão de crédito",
+      items: [{ name: "Produto", price: 1000, cost: 400, quantity: 1 }]
+    }
+  ], 30, today, { creditPercent: 2 });
+
+  assert.equal(result.revenueCents, 1000);
+  assert.equal(result.collectedRevenueCents, 900);
+  assert.equal(result.discountCents, 100);
+  assert.equal(result.paymentFeeCents, 18);
+  assert.equal(result.netRevenueCents, 882);
+  assert.equal(result.grossProfitCents, 500);
+  assert.equal(result.averageTicketCents, 900);
+  assert.equal(result.trend.reduce((total, bucket) => total + bucket.value, 0), 1000);
+});
+
 test("rejects invalid fee rates and sale amounts", () => {
   assert.throws(() => estimatePaymentFeeCents(100, "Cartão de crédito", { creditPercent: 101 }), RangeError);
   assert.throws(() => estimatePaymentFeeCents(-1, "Dinheiro"), RangeError);

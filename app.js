@@ -2,6 +2,7 @@ import { createCloudStore } from "./cloud-store.js";
 import { cashEntryStatus, summarizeCashFlow } from "./cash-flow.js";
 import { parseKyteProductsCsv, parseKyteSalesCsv } from "./kyte-import.js";
 import { calculateSalesAnalytics, estimatePaymentFeeCents } from "./sales-analytics.js";
+import { calculateDiscountCents } from "./sale-discount.js";
 
 const STORAGE_KEY = "balcao-mvp-v1";
 const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
@@ -354,6 +355,13 @@ function saleRevenue(sales) {
   return sales.reduce((total, sale) => total + (sale.status === "completed" ? sale.total : 0), 0);
 }
 
+function saleDiscountLabel(sale) {
+  if (!sale.discountCents) return "";
+  return sale.discountType === "percent"
+    ? `${PERCENT.format(sale.discountValue)}%`
+    : money(sale.discountCents);
+}
+
 function recentSalesTable(sales, limit = 5) {
   const rows = [...sales].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, limit);
   if (!rows.length) return `<div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Nenhuma venda por aqui</strong><p>Assim que você registrar uma venda, ela aparece aqui.</p></div></div>`;
@@ -362,7 +370,7 @@ function recentSalesTable(sales, limit = 5) {
     <td>${escapeHTML(customerName(sale.customerId, sale.customerName))}</td>
     <td>${escapeHTML(formatDate(sale.date, true))}</td>
     <td>${escapeHTML(sale.payment)}</td>
-    <td><strong>${money(sale.total)}</strong></td>
+    <td><strong>${money(sale.total)}</strong>${sale.discountCents ? `<div class="stock-sku">Desconto ${escapeHTML(saleDiscountLabel(sale))}</div>` : ""}</td>
     <td><span class="status-pill${sale.status === "cancelled" ? " cancelled" : ""}">${sale.status === "completed" ? "Concluída" : "Cancelada"}</span></td>
   </tr>`).join("")}</tbody></table></div>`;
 }
@@ -432,14 +440,14 @@ function renderAnalytics() {
   pageContent.innerHTML = `${pageHeading("DESEMPENHO DA LOJA", "Análises de vendas", "Acompanhe faturamento, ticket médio e o que mais vende.", action)}
     <section class="panel analytics-toolbar"><label for="analytics-period">Período</label><select class="select-control" id="analytics-period" aria-label="Período das análises"><option value="7"${analyticsPeriod === 7 ? " selected" : ""}>Últimos 7 dias</option><option value="30"${analyticsPeriod === 30 ? " selected" : ""}>Últimos 30 dias</option><option value="90"${analyticsPeriod === 90 ? " selected" : ""}>Últimos 90 dias</option></select><span>${formatDate(analysis.start)} – ${formatDate(analysis.end)}</span></section>
     <div class="metric-grid">
-      <article class="metric-card"><div class="metric-top"><span>Faturamento bruto</span><span class="metric-icon">${iconMarkup("coin")}</span></div><div class="metric-value">${money(analysis.revenueCents)}</div><div class="metric-note">${analysis.completedCount} ${analysis.completedCount === 1 ? "venda concluída" : "vendas concluídas"}${analysis.cancelledCount ? ` · ${analysis.cancelledCount} canceladas excluídas` : ""}</div></article>
+      <article class="metric-card"><div class="metric-top"><span>Faturamento bruto</span><span class="metric-icon">${iconMarkup("coin")}</span></div><div class="metric-value">${money(analysis.revenueCents)}</div><div class="metric-note">${analysis.completedCount} ${analysis.completedCount === 1 ? "venda concluída" : "vendas concluídas"}${analysis.discountCents ? ` · ${money(analysis.discountCents)} em descontos` : ""}${analysis.cancelledCount ? ` · ${analysis.cancelledCount} canceladas excluídas` : ""}</div></article>
       <article class="metric-card"><div class="metric-top"><span>Taxas estimadas</span><span class="metric-icon">${iconMarkup("coin")}</span></div><div class="metric-value">${money(analysis.paymentFeeCents)}</div><div class="metric-note">${analysis.paymentFeeIsPartial ? "Cartões antigos sem tipo não incluídos" : "Somente débito e crédito"}</div></article>
-      <article class="metric-card"><div class="metric-top"><span>Líquido estimado</span><span class="metric-icon">${iconMarkup("trend")}</span></div><div class="metric-value">${money(analysis.netRevenueCents)}</div><div class="metric-note">Bruto menos taxas configuradas</div></article>
+      <article class="metric-card"><div class="metric-top"><span>Líquido estimado</span><span class="metric-icon">${iconMarkup("trend")}</span></div><div class="metric-value">${money(analysis.netRevenueCents)}</div><div class="metric-note">Recebido após descontos e taxas configuradas</div></article>
       <article class="metric-card"><div class="metric-top"><span>Vendas concluídas</span><span class="metric-icon">${iconMarkup("receipt")}</span></div><div class="metric-value">${analysis.completedCount}</div><div class="metric-note">Cancelamentos não entram no cálculo</div></article>
       <article class="metric-card"><div class="metric-top"><span>Ticket médio</span><span class="metric-icon">${iconMarkup("bag")}</span></div><div class="metric-value">${money(analysis.averageTicketCents)}</div><div class="metric-note">Faturamento dividido pelas vendas concluídas</div></article>
       <article class="metric-card"><div class="metric-top"><span>Lucro bruto estimado</span><span class="metric-icon">${iconMarkup("trend")}</span></div><div class="metric-value">${money(analysis.grossProfitCents)}</div><div class="metric-note">${analysis.profitIsPartial ? "Estimativa parcial · há custos não informados" : "Com base nos custos cadastrados"}</div></article>
     </div>
-    <p class="analytics-footnote">Taxas são estimativas com base nos percentuais atuais da loja; vendas históricas identificadas apenas como “Cartão” não são classificadas como débito ou crédito.</p>
+    <p class="analytics-footnote">Faturamento bruto antes de descontos; valores por pagamento e líquido estimado consideram o total recebido. Taxas são estimativas com base nos percentuais atuais da loja; vendas históricas identificadas apenas como “Cartão” não são classificadas como débito ou crédito.</p>
     <section class="panel analytics-chart-panel"><div class="panel-header"><div><h2 class="panel-title">Faturamento ao longo do tempo</h2><p class="panel-subtitle">${periodLabel} · valores brutos das vendas concluídas</p></div><strong class="analytics-total">${money(analysis.revenueCents)}</strong></div><div class="analytics-chart-wrap">${analysis.completedCount ? analyticsChartMarkup(analysis.trend) : `<div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Sem vendas neste período</strong><p>As vendas concluídas vão aparecer neste gráfico.</p></div></div>`}</div></section>
     <div class="dashboard-grid analytics-detail-grid">
       <section class="panel"><div class="panel-header"><div><h2 class="panel-title">Vendas por pagamento</h2><p class="panel-subtitle">Distribuição do faturamento por forma</p></div></div><div class="analytics-breakdown">${paymentRows || `<div class="analytics-empty">Ainda não há vendas concluídas no período.</div>`}</div></section>
@@ -459,7 +467,7 @@ function renderDashboard() {
   const missingCost = today.some(sale => sale.status === "completed" && (sale.importSource && sale.importProfitCents === null || sale.items.some(item => item.cost === null)));
   const grossProfit = completedToday.reduce((sum, sale) => sum + (sale.importProfitCents !== null && sale.importProfitCents !== undefined
     ? sale.importProfitCents
-    : sale.items.reduce((sub, item) => sub + (item.cost === null ? 0 : (item.price - item.cost) * item.quantity), 0)), 0);
+    : sale.items.reduce((sub, item) => sub + (item.cost === null ? 0 : (item.price - item.cost) * item.quantity), 0)) - (sale.discountCents ?? 0), 0);
   const salesWeek = state.sales.filter(sale => new Date(sale.date) >= new Date(Date.now() - 6 * 86400000));
   const weekTotal = saleRevenue(salesWeek);
   const topItems = new Map();
@@ -522,7 +530,7 @@ function renderSales() {
     <div class="detail-strip"><div class="detail-stat"><span>Vendas concluídas</span><strong>${state.sales.filter(sale => sale.status === "completed").length}</strong></div><div class="detail-stat"><span>Faturamento total</span><strong>${money(saleRevenue(state.sales))}</strong></div><div class="detail-stat"><span>Cancelamentos</span><strong>${state.sales.filter(sale => sale.status === "cancelled").length}</strong></div></div>
     <section class="panel"><div class="list-toolbar"><label class="search-box">${iconMarkup("search")}<input id="sales-search" type="search" placeholder="Buscar venda ou cliente..." value="${escapeHTML(salesQuery)}" aria-label="Buscar venda ou cliente"></label><span class="toolbar-spacer"></span><select class="select-control" id="sales-period" aria-label="Filtrar por período"><option value="all"${salesPeriod === "all" ? " selected" : ""}>Qualquer data</option><option value="today"${salesPeriod === "today" ? " selected" : ""}>Hoje</option><option value="7d"${salesPeriod === "7d" ? " selected" : ""}>Últimos 7 dias</option><option value="30d"${salesPeriod === "30d" ? " selected" : ""}>Últimos 30 dias</option></select></div>
       <div class="filter-tabs" role="group" aria-label="Filtrar vendas"><button class="filter-tab${salesFilter === "all" ? " is-selected" : ""}" type="button" data-sales-filter="all">Todas</button><button class="filter-tab${salesFilter === "completed" ? " is-selected" : ""}" type="button" data-sales-filter="completed">Concluídas</button><button class="filter-tab${salesFilter === "cancelled" ? " is-selected" : ""}" type="button" data-sales-filter="cancelled">Canceladas</button></div>
-      <div class="table-wrap"><table><thead><tr><th>VENDA</th><th>CLIENTE</th><th>DATA E HORA</th><th>PAGAMENTO</th><th>VALOR</th><th>STATUS</th><th></th></tr></thead><tbody>${filtered.length ? filtered.map(sale => `<tr><td><strong>${escapeHTML(sale.id)}</strong>${sale.importReference ? `<div class="stock-sku">Kyte #${escapeHTML(sale.importReference)}</div>` : ""}</td><td>${escapeHTML(customerName(sale.customerId, sale.customerName))}</td><td>${escapeHTML(formatDate(sale.date, true))}</td><td>${escapeHTML(sale.payment)}</td><td><strong>${money(sale.total)}</strong></td><td><span class="status-pill${sale.status === "cancelled" ? " cancelled" : ""}">${sale.status === "completed" ? "Concluída" : "Cancelada"}</span></td><td>${sale.importSource ? `<button class="table-action" type="button" data-action="sale-details" data-id="${escapeHTML(sale.id)}">Detalhes</button>` : sale.status === "completed" ? `<button class="table-action danger" type="button" data-action="cancel-sale" data-id="${escapeHTML(sale.id)}">Cancelar</button>` : `<span class="customer-contact" title="${escapeHTML(sale.cancelReason)}">Devolvida</span>`}</td></tr>`).join("") : `<tr><td colspan="7"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Nenhuma venda encontrada</strong><p>Experimente buscar por outro termo.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "venda" : "vendas"} exibidas · faturamento considera somente vendas concluídas</div></section>`;
+      <div class="table-wrap"><table><thead><tr><th>VENDA</th><th>CLIENTE</th><th>DATA E HORA</th><th>PAGAMENTO</th><th>VALOR</th><th>STATUS</th><th></th></tr></thead><tbody>${filtered.length ? filtered.map(sale => `<tr><td><strong>${escapeHTML(sale.id)}</strong>${sale.importReference ? `<div class="stock-sku">Kyte #${escapeHTML(sale.importReference)}</div>` : ""}</td><td>${escapeHTML(customerName(sale.customerId, sale.customerName))}</td><td>${escapeHTML(formatDate(sale.date, true))}</td><td>${escapeHTML(sale.payment)}</td><td><strong>${money(sale.total)}</strong>${sale.discountCents ? `<div class="stock-sku">Subtotal ${money(sale.subtotalCents ?? sale.total + sale.discountCents)} · desconto ${escapeHTML(saleDiscountLabel(sale))}</div>` : ""}</td><td><span class="status-pill${sale.status === "cancelled" ? " cancelled" : ""}">${sale.status === "completed" ? "Concluída" : "Cancelada"}</span></td><td>${sale.importSource ? `<button class="table-action" type="button" data-action="sale-details" data-id="${escapeHTML(sale.id)}">Detalhes</button>` : sale.status === "completed" ? `<button class="table-action danger" type="button" data-action="cancel-sale" data-id="${escapeHTML(sale.id)}">Cancelar</button>` : `<span class="customer-contact" title="${escapeHTML(sale.cancelReason)}">Devolvida</span>`}</td></tr>`).join("") : `<tr><td colspan="7"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Nenhuma venda encontrada</strong><p>Experimente buscar por outro termo.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "venda" : "vendas"} exibidas · faturamento considera somente vendas concluídas</div></section>`;
 }
 
 function cashEntryDueDate(value) {
@@ -807,9 +815,11 @@ function checkoutDialog() {
   const total = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
   const customer = selectedCustomer ? state.customers.find(item => item.id === selectedCustomer)?.name : "";
   const items = cart.map(line => `<div class="checkout-summary-row"><span>${line.quantity}× ${escapeHTML(line.name)}</span><strong>${money(line.price * line.quantity)}</strong></div>`).join("");
-  openDialog("Finalizar venda", "Confira os itens e registre como o cliente pagou.", `<form id="checkout-form"><div class="checkout-summary">${items}<div class="checkout-summary-row total"><span>Total a pagar</span><strong>${money(total)}</strong></div></div>
-    <div class="form-grid"><div class="form-field"><label for="checkout-payment">Forma de pagamento *</label><select id="checkout-payment" name="payment" required><option>Dinheiro</option><option>Pix</option><option>Cartão de débito</option><option>Cartão de crédito</option><option>Outro</option></select></div><div class="form-field"><label for="checkout-customer">Cliente</label><input id="checkout-customer" value="${escapeHTML(customer || "Venda sem cliente")}" disabled></div></div>
-    <p class="field-hint checkout-fee-hint" id="checkout-fee-estimate" aria-live="polite">Este registro não processa pagamentos. O valor é recebido fora do sistema.</p><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Voltar</button><button class="button button-primary" type="submit">Confirmar venda · ${money(total)}</button></div></form>`);
+  openDialog("Finalizar venda", "Confira os itens, aplique um desconto se necessário e registre o pagamento.", `<form id="checkout-form"><div class="checkout-summary">${items}<div class="checkout-summary-row"><span>Subtotal</span><strong id="checkout-subtotal">${money(total)}</strong></div><div class="checkout-summary-row" id="checkout-discount-row" hidden><span>Desconto</span><strong id="checkout-discount-value"></strong></div><div class="checkout-summary-row total"><span>Total a pagar</span><strong id="checkout-total">${money(total)}</strong></div></div>
+    <div class="form-grid"><div class="form-field"><label for="checkout-discount-type">Desconto da venda</label><select id="checkout-discount-type" name="discountType"><option value="none">Sem desconto</option><option value="percent">Porcentagem (%)</option><option value="amount">Valor em reais (R$)</option></select></div><div class="form-field"><label for="checkout-discount-input">Valor do desconto</label><input id="checkout-discount-input" name="discountValue" type="number" min="0" step="0.01" value="0" disabled></div>
+    <div class="form-field"><label for="checkout-payment">Forma de pagamento *</label><select id="checkout-payment" name="payment" required><option>Dinheiro</option><option>Pix</option><option>Cartão de débito</option><option>Cartão de crédito</option><option>Outro</option></select></div><div class="form-field"><label for="checkout-customer">Cliente</label><input id="checkout-customer" value="${escapeHTML(customer || "Venda sem cliente")}" disabled></div></div><p class="field-hint" id="checkout-discount-error" role="alert" hidden></p>
+    <p class="field-hint checkout-fee-hint" id="checkout-fee-estimate" aria-live="polite">Este registro não processa pagamentos. O valor é recebido fora do sistema.</p><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Voltar</button><button class="button button-primary" id="checkout-confirm-button" type="submit">Confirmar venda · ${money(total)}</button></div></form>`);
+  updateCheckoutFeeEstimate();
 }
 
 function cashEntryDialog() {
@@ -834,11 +844,43 @@ function updateCheckoutFeeEstimate() {
   const payment = $("#checkout-payment")?.value;
   const hint = $("#checkout-fee-estimate");
   if (!hint) return;
+  const subtotal = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  const discountType = $("#checkout-discount-type")?.value ?? "none";
+  const discountInput = $("#checkout-discount-input");
+  const error = $("#checkout-discount-error");
+  const confirmButton = $("#checkout-confirm-button");
+  const rawValue = discountInput?.value ?? "0";
+  const discountValue = discountType === "amount"
+    ? (rawValue.trim() ? parseMoney(rawValue) : 0)
+    : discountType === "percent"
+      ? (rawValue.trim() ? Number(rawValue) : 0)
+      : 0;
+  let discount = 0;
+  try {
+    discount = calculateDiscountCents(subtotal, discountType, discountValue);
+    if (discountInput && !discountInput.validity.valid) {
+      throw new RangeError("Informe um valor com até duas casas decimais.");
+    }
+    if (discountType === "percent" && Math.round(discountValue * 100) / 100 !== discountValue) {
+      throw new RangeError("Informe a porcentagem com até duas casas decimais.");
+    }
+    error.hidden = true;
+    confirmButton.disabled = false;
+  } catch (exception) {
+    error.textContent = exception.message;
+    error.hidden = false;
+    confirmButton.disabled = true;
+  }
+  const total = subtotal - discount;
+  $("#checkout-subtotal").textContent = money(subtotal);
+  $("#checkout-discount-row").hidden = discount === 0;
+  $("#checkout-discount-value").textContent = `− ${money(discount)}`;
+  $("#checkout-total").textContent = money(total);
+  confirmButton.textContent = `Confirmar venda · ${money(total)}`;
   if (payment !== "Cartão de débito" && payment !== "Cartão de crédito") {
     hint.textContent = "Este registro não processa pagamentos. O valor é recebido fora do sistema.";
     return;
   }
-  const total = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
   const rate = payment === "Cartão de débito" ? state.cardDebitFeePercent : state.cardCreditFeePercent;
   const fee = estimatePaymentFeeCents(total, payment, {
     debitPercent: Number(state.cardDebitFeePercent),
@@ -849,7 +891,9 @@ function updateCheckoutFeeEstimate() {
 
 function receiptDialog(sale) {
   const rows = sale.items.map(item => `<div class="receipt-row"><span>${item.quantity}× ${escapeHTML(item.name)}</span><strong>${money(item.price * item.quantity)}</strong></div>`).join("");
-  dialogContent.innerHTML = `<div class="receipt-success"><span class="receipt-success-mark">✓</span><h2>Venda concluída!</h2><p>${escapeHTML(sale.id)} · ${escapeHTML(formatDate(sale.date, true))}</p><div class="receipt-box">${rows}<div class="receipt-row"><span>Pagamento</span><strong>${escapeHTML(sale.payment)}</strong></div><div class="receipt-row"><span>Total</span><strong>${money(sale.total)}</strong></div></div><button class="button button-primary" type="button" data-action="receipt-done">Concluir</button></div>`;
+  const subtotal = sale.subtotalCents ?? sale.total + (sale.discountCents ?? 0);
+  const discount = sale.discountCents ?? 0;
+  dialogContent.innerHTML = `<div class="receipt-success"><span class="receipt-success-mark">✓</span><h2>Venda concluída!</h2><p>${escapeHTML(sale.id)} · ${escapeHTML(formatDate(sale.date, true))}</p><div class="receipt-box">${rows}${discount ? `<div class="receipt-row"><span>Subtotal</span><strong>${money(subtotal)}</strong></div><div class="receipt-row"><span>Desconto (${escapeHTML(saleDiscountLabel(sale))})</span><strong>− ${money(discount)}</strong></div>` : ""}<div class="receipt-row"><span>Pagamento</span><strong>${escapeHTML(sale.payment)}</strong></div><div class="receipt-row"><span>Total</span><strong>${money(sale.total)}</strong></div></div><button class="button button-primary" type="button" data-action="receipt-done">Concluir</button></div>`;
   dialog.showModal();
 }
 
@@ -1109,6 +1153,24 @@ function changeCartQuantity(productId, delta) {
 async function completeSale(form) {
   const data = new FormData(form);
   const payment = String(data.get("payment") || "");
+  const discountType = String(data.get("discountType") || "none");
+  const rawDiscountValue = String(data.get("discountValue") || "").trim();
+  const enteredDiscountValue = discountType === "amount"
+    ? (rawDiscountValue ? parseMoney(rawDiscountValue) : 0)
+    : discountType === "percent"
+      ? (rawDiscountValue ? Number(rawDiscountValue) : 0)
+      : 0;
+  const subtotal = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  let discountCents;
+  try {
+    if (discountType === "percent" && Math.round(enteredDiscountValue * 100) / 100 !== enteredDiscountValue) {
+      throw new RangeError("Informe a porcentagem com até duas casas decimais.");
+    }
+    discountCents = calculateDiscountCents(subtotal, discountType, enteredDiscountValue);
+  } catch (error) {
+    showToast(error.message, "error");
+    return;
+  }
   const current = structuredClone(state);
   for (const line of cart) {
     const product = current.products.find(item => item.id === line.productId && item.active);
@@ -1121,7 +1183,7 @@ async function completeSale(form) {
     }
     product.stock -= line.quantity;
   }
-  const total = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  const total = subtotal - discountCents;
   const sale = {
     id: `VD-${current.nextSale}`,
     date: new Date().toISOString(),
@@ -1129,6 +1191,12 @@ async function completeSale(form) {
     payment,
     status: "completed",
     items: cart.map(line => ({ ...line })),
+    subtotalCents: subtotal,
+    discountCents,
+    discountType: discountCents ? discountType : "none",
+    discountValue: discountCents
+      ? discountType === "amount" ? enteredDiscountValue / 100 : Math.round(enteredDiscountValue * 100) / 100
+      : 0,
     total,
     cancelReason: ""
   };
@@ -1711,6 +1779,10 @@ document.addEventListener("input", event => {
 });
 
 document.addEventListener("input", event => {
+  if (event.target.id === "checkout-discount-input") {
+    updateCheckoutFeeEstimate();
+    return;
+  }
   if (event.target.id === "product-search") {
     productQuery = event.target.value;
     renderProducts();
@@ -1763,7 +1835,16 @@ document.addEventListener("change", event => {
   } else if (event.target.id === "cashflow-status") {
     cashFlowFilter = event.target.value;
     renderCashFlow();
-  } else if (event.target.id === "checkout-payment") updateCheckoutFeeEstimate();
+  } else if (event.target.id === "checkout-payment") {
+    updateCheckoutFeeEstimate();
+  } else if (event.target.id === "checkout-discount-type") {
+    const input = $("#checkout-discount-input");
+    input.disabled = event.target.value === "none";
+    input.value = "0";
+    input.max = event.target.value === "percent" ? "100" : "";
+    input.placeholder = event.target.value === "percent" ? "0,00%" : "0,00";
+    updateCheckoutFeeEstimate();
+  }
 });
 
 $("#mobile-menu").addEventListener("click", () => {

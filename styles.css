@@ -286,6 +286,7 @@ td strong { color: var(--ink); font-weight: 600; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 19px; padding-top: 15px; border-top: 1px solid #f0f2f0; }
 .checkout-summary { display: grid; gap: 9px; margin: 0 0 14px; padding: 13px; border-radius: 9px; background: #f7f9f7; }
 .checkout-summary-row { display: flex; justify-content: space-between; color: #738078; font-size: 10px; }
+.checkout-summary-row[hidden] { display: none; }
 .checkout-summary-row.total { padding-top: 9px; border-top: 1px solid #e8ede9; color: var(--ink); font-size: 12px; font-weight: 700; }
 .checkout-fee-hint { margin: 12px 0 0; }
 .receipt-success { padding: 23px; text-align: center; }

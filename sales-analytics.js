@@ -11,10 +11,11 @@ function dayKey(date) {
 }
 
 function saleProfit(sale) {
+  const discount = sale.discountCents ?? 0;
   if (sale.importProfitCents !== null && sale.importProfitCents !== undefined) {
-    return sale.importProfitCents;
+    return sale.importProfitCents - discount;
   }
-  return sale.items.reduce((total, item) => total + (item.cost === null ? 0 : (item.price - item.cost) * item.quantity), 0);
+  return sale.items.reduce((total, item) => total + (item.cost === null ? 0 : (item.price - item.cost) * item.quantity), 0) - discount;
 }
 
 export function estimatePaymentFeeCents(totalCents, payment, feeRates = {}) {
@@ -47,7 +48,9 @@ export function calculateSalesAnalytics(sales, days = 30, now = new Date(), feeR
     return !Number.isNaN(date.getTime()) && date >= start && date <= now;
   });
   const completed = periodSales.filter(sale => sale.status === "completed");
-  const revenueCents = completed.reduce((sum, sale) => sum + sale.total, 0);
+  const collectedRevenueCents = completed.reduce((sum, sale) => sum + sale.total, 0);
+  const discountCents = completed.reduce((sum, sale) => sum + (sale.discountCents ?? 0), 0);
+  const revenueCents = collectedRevenueCents + discountCents;
   const paymentFeeCents = completed.reduce((sum, sale) =>
     sum + estimatePaymentFeeCents(sale.total, sale.payment, feeRates), 0);
   const unestimatedLegacyCardCents = completed.reduce((sum, sale) =>
@@ -67,7 +70,8 @@ export function calculateSalesAnalytics(sales, days = 30, now = new Date(), feeR
     bucketEnd.setDate(bucketEnd.getDate() + intervalDays);
     const value = completed.reduce((sum, sale) => {
       const date = new Date(sale.date);
-      return date >= bucketStart && date < bucketEnd ? sum + sale.total : sum;
+      const subtotal = sale.subtotalCents ?? sale.total + (sale.discountCents ?? 0);
+      return date >= bucketStart && date < bucketEnd ? sum + subtotal : sum;
     }, 0);
     return { date: bucketStart, label: dayKey(bucketStart), value };
   });
@@ -93,10 +97,12 @@ export function calculateSalesAnalytics(sales, days = 30, now = new Date(), feeR
     cancelledCount: periodSales.filter(sale => sale.status === "cancelled").length,
     revenueCents,
     paymentFeeCents,
-    netRevenueCents: revenueCents - paymentFeeCents,
+    collectedRevenueCents,
+    discountCents,
+    netRevenueCents: collectedRevenueCents - paymentFeeCents,
     unestimatedLegacyCardCents,
     paymentFeeIsPartial: unestimatedLegacyCardCents > 0,
-    averageTicketCents: completed.length ? Math.round(revenueCents / completed.length) : 0,
+    averageTicketCents: completed.length ? Math.round(collectedRevenueCents / completed.length) : 0,
     grossProfitCents,
     profitIsPartial,
     trend,
