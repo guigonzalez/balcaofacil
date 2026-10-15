@@ -214,7 +214,7 @@ function showToast(message, type = "success") {
 }
 
 function commit(nextState, successMessage, productImageChanges = new Map()) {
-  if (cloudStore) return commitCloudState(nextState, successMessage);
+  if (cloudStore) return commitCloudState(nextState, successMessage, productImageChanges);
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
   } catch (error) {
@@ -229,7 +229,7 @@ function commit(nextState, successMessage, productImageChanges = new Map()) {
   return true;
 }
 
-async function commitCloudState(nextState, successMessage, productImageChanges) {
+async function commitCloudState(nextState, successMessage, productImageChanges = new Map()) {
   if (cloudWritePending) {
     showToast("Aguarde a operação atual terminar antes de salvar outra alteração.", "error");
     return false;
