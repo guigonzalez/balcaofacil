@@ -2081,6 +2081,16 @@ document.addEventListener("keydown", event => {
   }
 });
 
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register(new URL("./sw.js", document.baseURI), {
+      scope: new URL("./", document.baseURI).pathname
+    }).catch(error => {
+      console.error("Não foi possível preparar a instalação do BalcãoFácil.", error);
+    });
+  });
+}
+
 const hasSupabaseConfig = typeof __SUPABASE_URL__ !== "undefined" && Boolean(__SUPABASE_URL__) && typeof __SUPABASE_ANON_KEY__ !== "undefined" && Boolean(__SUPABASE_ANON_KEY__);
 if (hasSupabaseConfig) {
   startCloudApp(__SUPABASE_URL__, __SUPABASE_ANON_KEY__);

@@ -6,6 +6,10 @@ MVP de gestão para pequenos negócios: painel, frente de caixa, produtos, estoq
 
 Execute `npm install` e `npm run dev`. Sem variáveis Supabase, o servidor local usa dados de demonstração no navegador; **Configurações da loja → Restaurar demonstração** os repõe. O pagamento é registrado manualmente, sem processamento. Não abra `index.html` diretamente: o app usa módulos carregados pelo Vite.
 
+## Instalação no celular
+
+O BalcãoFácil pode ser instalado como PWA e funciona conectado à internet. Acesse o endereço publicado por HTTPS no navegador do celular e use **Instalar app/Adicionar à tela inicial** no Android ou **Compartilhar → Adicionar à Tela de Início** no iPhone. O app shell e arquivos estáticos podem ser abertos do cache quando a rede falhar, mas login, dados da loja e operações de venda precisam de conexão; não há modo de venda offline nem sincronização posterior.
+
 ## Base de implantação
 
 O projeto suporta execução local em demonstração e modo conectado à Vercel/Supabase:
