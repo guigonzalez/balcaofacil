@@ -65,6 +65,8 @@ Em **Configurações da loja → Equipe da loja**, proprietários e administrado
 
 O perfil **Atendente** inicia na frente de caixa e pode consultar apenas produtos ativos em **Estoque**. Não acessa as demais páginas, o histórico de vendas nem produtos arquivados; também não pode criar/editar produtos, ajustar estoque manualmente, gerir clientes ou cancelar vendas. O estoque é reduzido automaticamente ao concluir uma venda.
 
+Na **Frente de caixa** e no **Modo Caixa**, os produtos são organizados em pastas por categoria. A busca também encontra produtos pelo nome ou código; ao abrir uma pasta, use **Pastas** para voltar à lista de categorias.
+
 O botão flutuante **Modo Caixa** fica disponível em todas as páginas. Ao ativá-lo, a navegação é ocultada e a interface passa a focar nas vendas; ao voltar pelo botão ou pela tecla Esc, a página anterior, seus filtros, campos e posição de rolagem são restaurados.
 
 Em **Configurações da loja**, o proprietário pode apagar permanentemente a loja e todos os dados, confirmando o nome exato; os logins dos demais membros são preservados, mas perdem acesso à loja. Cada membro também pode apagar a própria conta confirmando o e-mail. Se houver outras pessoas, a propriedade passa ao administrador mais antigo ou, na falta deles, ao atendente mais antigo; se o proprietário for o único membro, a loja e seus dados também são apagados. A exclusão é irreversível.

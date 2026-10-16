@@ -13,6 +13,7 @@ const icons = {
   home: '<svg viewBox="0 0 24 24"><path d="m3.5 10 8.5-7 8.5 7"/><path d="M5.5 9v11h13V9M9.5 20v-6h5v6"/></svg>',
   cart: '<svg viewBox="0 0 24 24"><path d="M3 4h2l2.2 11.2a2 2 0 0 0 2 1.6h8.6a2 2 0 0 0 2-1.6L21 8H6"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>',
   box: '<svg viewBox="0 0 24 24"><path d="m12 3 9 4.7v8.6L12 21l-9-4.7V7.7L12 3Z"/><path d="m3.3 7.8 8.7 4.6 8.7-4.6M12 12.4V21M7.5 5.4l9 4.8"/></svg>',
+  folder: '<svg viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H10l2 2h7.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5v-11Z"/><path d="M3.5 9h17"/></svg>',
   receipt: '<svg viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3Z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>',
   users: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M3 20v-1.5a6 6 0 0 1 12 0V20M16 5a3.5 3.5 0 0 1 0 6.8M18 14a5 5 0 0 1 3 4.5V20"/></svg>',
   bell: '<svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>',
@@ -117,7 +118,7 @@ let cashierMode = false;
 let cashierReturnState = null;
 let cart = [];
 let selectedCustomer = "";
-let posCategory = "Todos";
+let posCategory = null;
 let productQuery = "";
 let customerQuery = "";
 let salesQuery = "";
@@ -689,19 +690,36 @@ function renderCustomers() {
 }
 
 function renderPOS() {
-  const posCategories = ["Todos", ...state.categories];
-  if (!posCategories.includes(posCategory)) posCategory = "Todos";
-  const available = state.products.filter(product => product.active && (posCategory === "Todos" || product.category === posCategory) && `${product.name} ${product.sku}`.toLocaleLowerCase("pt-BR").includes(productQuery.toLocaleLowerCase("pt-BR")));
+  if (posCategory && posCategory !== "Todos" && !state.categories.includes(posCategory)) posCategory = null;
+  const search = productQuery.toLocaleLowerCase("pt-BR");
+  const available = state.products.filter(product =>
+    product.active
+    && (!posCategory || posCategory === "Todos" || product.category === posCategory)
+    && `${product.name} ${product.sku}`.toLocaleLowerCase("pt-BR").includes(search)
+  );
+  const showFolders = !posCategory && !productQuery;
+  const folderMarkup = [
+    ["Todos", "Todos os produtos", state.products.filter(product => product.active).length],
+    ...state.categories
+      .map(category => [category, category, state.products.filter(product => product.active && product.category === category).length])
+      .filter(([, , count]) => count > 0)
+  ].map(([category, label, count]) =>
+    `<button class="pos-folder-card" type="button" data-category="${escapeHTML(category)}"><span class="pos-folder-icon">${icons.folder}</span><span class="pos-folder-copy"><strong>${escapeHTML(label)}</strong><small>${count} ${count === 1 ? "produto" : "produtos"}</small></span><span class="pos-folder-chevron" aria-hidden="true">›</span></button>`
+  ).join("");
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const total = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
   const productCards = available.map(product => {
     const [emoji, color] = artFor(product.name);
-    return `<button class="pos-product-card" type="button" data-action="add-to-cart" data-id="${escapeHTML(product.id)}" ${product.stock <= 0 ? "disabled" : ""}>${productImageSource(product) ? productThumbMarkup(product, "pos-product-visual product-photo", color) : `<span class="pos-product-visual ${color}"><span aria-hidden="true">${emoji}</span></span>`}<span class="pos-product-name">${escapeHTML(product.name)}</span><span class="pos-product-bottom"><span class="pos-product-price">${money(product.price)}</span><span class="pos-product-stock">${product.stock > 0 ? `${product.stock} un.` : "Esgotado"}</span></span></button>`;
+    const categoryLabel = !posCategory ? `<span class="pos-product-category">${escapeHTML(product.category)}</span>` : "";
+    return `<button class="pos-product-card" type="button" data-action="add-to-cart" data-id="${escapeHTML(product.id)}" ${product.stock <= 0 ? "disabled" : ""}>${productImageSource(product) ? productThumbMarkup(product, "pos-product-visual product-photo", color) : `<span class="pos-product-visual ${color}"><span aria-hidden="true">${emoji}</span></span>`}<span class="pos-product-name">${escapeHTML(product.name)}</span>${categoryLabel}<span class="pos-product-bottom"><span class="pos-product-price">${money(product.price)}</span><span class="pos-product-stock">${product.stock > 0 ? `${product.stock} un.` : "Esgotado"}</span></span></button>`;
   }).join("");
   const customerOptions = state.customers.map(customer => `<option value="${escapeHTML(customer.id)}"${selectedCustomer === customer.id ? " selected" : ""}>${escapeHTML(customer.name)}</option>`).join("");
+  const productBrowser = showFolders
+    ? `<div class="pos-folder-grid" aria-label="Pastas de categorias">${folderMarkup}</div>`
+    : `<div class="pos-browser-heading"><button class="pos-back-button" type="button" data-action="back-to-pos-folders"><span aria-hidden="true">←</span> Pastas</button><div><h2>${escapeHTML(posCategory || "Resultados da busca")}</h2><span>${available.length} ${available.length === 1 ? "produto encontrado" : "produtos encontrados"}</span></div></div><div class="pos-product-grid">${productCards || `<div class="empty-state"><div><span class="empty-symbol">⌕</span><strong>Nenhum produto encontrado</strong><p>Experimente buscar por outro termo ou abrir outra pasta.</p></div></div>`}</div>`;
   pageContent.innerHTML = `${pageHeading(cashierMode ? "MODO CAIXA" : "VENDA PRESENCIAL", "Frente de caixa", cashierMode ? "Tela focada em vendas · pressione Esc para voltar." : "Toque em um produto para adicioná-lo à venda.", "")}
-    <div class="pos-layout"><div class="pos-main"><div class="pos-toolbar"><label class="search-box">${iconMarkup("search")}<input id="pos-search" type="search" placeholder="Buscar um produto..." value="${escapeHTML(productQuery)}" aria-label="Buscar produto para venda"></label><div class="category-list" role="group" aria-label="Filtrar categoria">${posCategories.map(category => `<button class="category-chip${posCategory === category ? " is-selected" : ""}" type="button" data-category="${escapeHTML(category)}">${escapeHTML(category)}</button>`).join("")}</div></div>
-      <div class="pos-product-grid">${productCards || `<div class="empty-state"><div><span class="empty-symbol">⌕</span><strong>Nenhum produto disponível</strong><p>Cadastre um produto ou ajuste os filtros.</p></div></div>`}</div></div>
+    <div class="pos-layout"><div class="pos-main"><div class="pos-toolbar"><label class="search-box">${iconMarkup("search")}<input id="pos-search" type="search" placeholder="Buscar um produto..." value="${escapeHTML(productQuery)}" aria-label="Buscar produto para venda"></label></div>
+      ${productBrowser}</div>
     <section class="panel cart-panel"><div class="panel-header"><div class="cart-heading"><h2 class="panel-title">Venda atual</h2><span class="cart-badge">${cartCount}</span></div><button class="table-action danger" type="button" data-action="clear-cart" ${cart.length ? "" : "disabled"}>Limpar</button></div>
       <div class="cart-body">${cart.length ? cart.map(line => `<div class="cart-item"><div class="cart-item-title">${escapeHTML(line.name)}</div><div class="cart-item-total">${money(line.price * line.quantity)}</div><div class="cart-item-subtitle">${money(line.price)} cada</div><div class="quantity-control"><button type="button" data-action="cart-quantity" data-id="${escapeHTML(line.productId)}" data-delta="-1" aria-label="Diminuir quantidade">−</button><span>${line.quantity}</span><button type="button" data-action="cart-quantity" data-id="${escapeHTML(line.productId)}" data-delta="1" aria-label="Aumentar quantidade">+</button></div></div>`).join("") : `<div class="cart-empty"><div><span>🛍️</span><p>Sua venda começa<br>com um produto.</p></div></div>`}</div>
       <div class="cart-footer"><label class="cart-customer"><span data-icon="users">${iconMarkup("users")}</span><select id="pos-customer" aria-label="Associar cliente"><option value="">Adicionar cliente (opcional)</option>${customerOptions}</select></label><div class="cart-totals"><div class="cart-total-row"><span>Subtotal</span><span>${money(total)}</span></div><div class="cart-total-row grand"><span>Total</span><span>${money(total)}</span></div></div><button class="button button-primary checkout-button" type="button" data-action="checkout" ${cart.length ? "" : "disabled"}>Cobrar ${money(total)} <span>→</span></button><p class="helper-note">Pagamento registrado manualmente · sem cobrança integrada</p></div>
@@ -1799,6 +1817,7 @@ document.addEventListener("click", async event => {
   const categoryButton = event.target.closest("[data-category]");
   if (categoryButton) {
     posCategory = categoryButton.dataset.category;
+    productQuery = "";
     renderPOS();
     return;
   }
@@ -1820,6 +1839,11 @@ document.addEventListener("click", async event => {
     productFilter = "active";
     productQuery = "";
     navigate("produtos");
+  }
+  else if (action === "back-to-pos-folders") {
+    posCategory = null;
+    productQuery = "";
+    renderPOS();
   }
   else if (action === "toggle-cashier-mode") toggleCashierMode();
   else if (action === "delete-store" && state?.role === "owner") dataDeletionDialog("delete-store");
@@ -1849,7 +1873,7 @@ document.addEventListener("click", async event => {
     const current = structuredClone(state);
     current.categories = current.categories.filter(category => category !== id);
     if (await commit(current, `Categoria “${id}” apagada.`)) {
-      if (posCategory === id) posCategory = "Todos";
+      if (posCategory === id) posCategory = null;
       categoryManagerDialog();
     }
   }
