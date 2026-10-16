@@ -332,9 +332,13 @@ function updateShell() {
     if (icons[key]) element.innerHTML = icons[key];
   });
   const cashierFab = $(".cashier-fab");
-  cashierFab.setAttribute("aria-label", cashierMode ? "Voltar à tela anterior" : "Ativar Modo Caixa");
-  cashierFab.title = cashierMode ? "Voltar à tela anterior" : "Ativar Modo Caixa";
-  $("#cashier-fab-label").textContent = cashierMode ? "Voltar à tela anterior" : "Modo Caixa";
+  const cashierFabLabel = cashierMode ? "Sair do Modo Caixa" : "Modo Caixa";
+  cashierFab.setAttribute("aria-label", cashierMode ? cashierFabLabel : "Ativar Modo Caixa");
+  cashierFab.title = cashierMode ? cashierFabLabel : "Ativar Modo Caixa";
+  $("#cashier-fab-label").textContent = cashierFabLabel;
+  $(".cashier-fab-icon").innerHTML = cashierMode
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>'
+    : icons.cart;
   $("#cashflow-nav").hidden = !canManageCashFlow();
   $$(".nav-link").forEach(link => {
     link.hidden = attendant && !["pdv", "produtos"].includes(link.dataset.page);
