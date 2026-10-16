@@ -62,8 +62,9 @@ export function summarizeCashFlow(entries, now = new Date()) {
     }
   }
 
-  summary.projectedBalanceCents = summary.openReceivablesCents - summary.openPayablesCents;
   summary.settledBalanceThisMonthCents =
     summary.settledReceivablesThisMonthCents - summary.settledPayablesThisMonthCents;
+  summary.projectedBalanceCents =
+    summary.settledBalanceThisMonthCents + summary.openReceivablesCents - summary.openPayablesCents;
   return summary;
 }

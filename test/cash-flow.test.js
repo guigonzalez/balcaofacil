@@ -24,7 +24,7 @@ test("summarizes open balances, overdue accounts, and settled movement for the m
   assert.equal(summary.openReceivablesCents, 8000);
   assert.equal(summary.overdueCents, 11000);
   assert.equal(summary.overdueCount, 2);
-  assert.equal(summary.projectedBalanceCents, -7000);
+  assert.equal(summary.projectedBalanceCents, 8000);
   assert.equal(summary.settledReceivablesThisMonthCents, 20000);
   assert.equal(summary.settledPayablesThisMonthCents, 5000);
   assert.equal(summary.settledBalanceThisMonthCents, 15000);
