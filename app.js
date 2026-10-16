@@ -302,22 +302,28 @@ function updateShell() {
     $(".profile-copy strong").textContent = profileName;
     $(".profile-copy small").textContent = state.role === "owner" ? "Proprietário" : state.role === "admin" ? "Administrador" : "Atendente";
     $(".profile-avatar").textContent = profileInitials;
-    $(".topbar-avatar").textContent = profileInitials;
-    $(".topbar-avatar").setAttribute("aria-label", `Conta ${profileName}`);
   } else {
     $("#store-name").textContent = state.storeName;
     $(".store-copy small").textContent = "Plano demonstração";
     $(".profile-copy strong").textContent = "Conta de demonstração";
     $(".profile-copy small").textContent = "Exemplo local";
     $(".profile-avatar").textContent = "DE";
-    $(".topbar-avatar").textContent = "DE";
-    $(".topbar-avatar").setAttribute("aria-label", "Configurações da demonstração");
   }
   $("#today-label").textContent = formatLongDate();
   const lowStock = state.products.filter(product => product.active && product.stock <= product.lowStock).length;
   const badge = $("#low-stock-count");
   badge.textContent = lowStock ? String(lowStock) : "";
   badge.hidden = lowStock === 0;
+  const notificationBadge = $("#stock-notification-count");
+  notificationBadge.textContent = lowStock ? String(lowStock) : "";
+  notificationBadge.hidden = lowStock === 0;
+  const notificationButton = $(".notification-button");
+  notificationButton.setAttribute(
+    "aria-label",
+    lowStock
+      ? `${lowStock} ${lowStock === 1 ? "produto com" : "produtos com"} estoque baixo ou zerado`
+      : "Notificações de estoque: nenhum alerta"
+  );
   $$(".nav-link").forEach(link => link.classList.toggle("is-active", link.dataset.page === currentPage));
   const activeLink = $(`.nav-link[data-page="${currentPage}"]`);
   $("#current-section").textContent = activeLink?.querySelector("span:not(.nav-icon):not(.nav-shortcut):not(.nav-count)")?.textContent ?? "Visão geral";
@@ -339,16 +345,14 @@ function updateShell() {
   });
   $(".store-menu").hidden = attendant;
   $(".help-card").hidden = attendant;
-  $(".profile-button").hidden = attendant;
-  const accountButton = $(".topbar-avatar");
+  $(".profile-button").hidden = false;
+  const profileButton = $(".profile-button");
   if (attendant) {
-    accountButton.dataset.action = "sign-out";
-    accountButton.setAttribute("aria-label", "Sair da conta");
-    accountButton.title = "Sair da conta";
+    profileButton.dataset.action = "sign-out";
+    profileButton.setAttribute("aria-label", "Sair da conta");
   } else {
-    accountButton.dataset.action = "settings";
-    accountButton.setAttribute("aria-label", state?.cloud ? "Configurações da conta" : "Configurações da demonstração");
-    accountButton.removeAttribute("title");
+    profileButton.dataset.action = "settings";
+    profileButton.setAttribute("aria-label", state?.cloud ? "Configurações da conta" : "Configurações da demonstração");
   }
 }
 
@@ -526,6 +530,32 @@ function stockPill(product) {
   if (product.stock <= 0) return '<span class="stock-pill out">Sem estoque</span>';
   if (product.stock <= product.lowStock) return `<span class="stock-pill low">Estoque baixo · ${product.stock}</span>`;
   return `<span class="stock-pill">Em estoque · ${product.stock}</span>`;
+}
+
+function stockNotificationDialog() {
+  const products = state.products
+    .filter(product => product.active && product.stock <= product.lowStock)
+    .sort((left, right) => left.stock - right.stock || left.name.localeCompare(right.name, "pt-BR"));
+  const content = products.length
+    ? `<ul class="stock-notification-list">${products.map(product => {
+      const status = product.stock <= 0 ? "Sem estoque" : "Estoque baixo";
+      const statusClass = product.stock <= 0 ? "out" : "low";
+      const balance = product.stock <= 0
+        ? `Saldo ${product.stock} · mínimo ${product.lowStock}`
+        : `${product.stock} em estoque · mínimo ${product.lowStock}`;
+      return `<li class="stock-notification-item"><span class="stock-notification-indicator ${statusClass}" aria-hidden="true"></span><span class="stock-notification-copy"><strong>${escapeHTML(product.name)}</strong><small>${escapeHTML(balance)}</small></span><span class="stock-notification-status ${statusClass}">${status}</span></li>`;
+    }).join("")}</ul>`
+    : `<div class="empty-state notification-empty"><div><span class="empty-symbol">✓</span><strong>Estoque em dia</strong><p>Nenhum produto ativo está com estoque baixo ou zerado.</p></div></div>`;
+  const action = products.length
+    ? `<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button><button class="button button-primary" type="button" data-action="open-stock-from-notifications">Abrir estoque</button></div>`
+    : `<div class="dialog-actions"><button class="button button-primary" type="button" data-action="close-dialog">Concluir</button></div>`;
+  openDialog(
+    "Notificações de estoque",
+    products.length
+      ? `${products.length} ${products.length === 1 ? "produto precisa" : "produtos precisam"} de atenção.`
+      : "Resumo dos produtos ativos da loja.",
+    `${content}${action}`
+  );
 }
 
 function renderProducts() {
@@ -1780,6 +1810,13 @@ document.addEventListener("click", async event => {
   if (action === "close-dialog") closeDialog();
   else if (action === "receipt-done") { closeDialog(); navigate(state?.role === "attendant" ? "pdv" : "vendas"); }
   else if (action === "settings" && (!state?.cloud || ["owner", "admin"].includes(state.role))) settingsDialog();
+  else if (action === "show-stock-notifications") stockNotificationDialog();
+  else if (action === "open-stock-from-notifications") {
+    closeDialog();
+    productFilter = "active";
+    productQuery = "";
+    navigate("produtos");
+  }
   else if (action === "toggle-cashier-mode") toggleCashierMode();
   else if (action === "delete-store" && state?.role === "owner") dataDeletionDialog("delete-store");
   else if (action === "delete-account" && state?.cloud) dataDeletionDialog("delete-account");

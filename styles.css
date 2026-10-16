@@ -53,7 +53,7 @@ button:disabled { cursor: not-allowed !important; opacity: .46; }
 .help-card p { max-width: 160px; margin: 5px 0 0; color: #c7c7c7; font-size: 10px; line-height: 1.6; }
 .help-decoration { position: absolute; right: 12px; bottom: 7px; color: #ddd; font-size: 28px; }
 .profile-button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 12px 6px 0; border: 0; border-top: 1px solid var(--line); background: transparent; cursor: pointer; text-align: left; }
-.profile-avatar, .topbar-avatar { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 50%; color: #444; background: #eee; font-size: 10px; font-weight: 700; }
+.profile-avatar { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border: 0; border-radius: 50%; color: #444; background: #eee; font-size: 10px; font-weight: 700; }
 .profile-dots { margin-left: auto; color: #849089; font-size: 19px; letter-spacing: 2px; }
 .main-area { min-height: 100vh; margin-left: 252px; }
 .topbar { position: sticky; z-index: 10; top: 0; display: flex; height: 66px; align-items: center; justify-content: space-between; padding: 0 39px; border-bottom: 1px solid #edf0ed; background: rgb(255 255 255 / 92%); backdrop-filter: blur(12px); }
@@ -66,8 +66,18 @@ button:disabled { cursor: not-allowed !important; opacity: .46; }
 .today-label { color: #78827d; font-size: 11px; }
 .topbar-divider { width: 1px; height: 22px; background: var(--line); }
 .notification-button { position: relative; }
-.notification-button i { position: absolute; top: 6px; right: 7px; width: 6px; height: 6px; border: 1px solid #fff; border-radius: 50%; background: #e7a14c; }
-.topbar-avatar { cursor: pointer; }
+.notification-count { position: absolute; top: 1px; right: 0; display: grid; min-width: 16px; height: 16px; place-items: center; padding: 0 4px; border: 1px solid #fff; border-radius: 10px; color: #fff; background: #d66b4f; font-size: 9px; font-weight: 700; line-height: 1; }
+.notification-count[hidden] { display: none; }
+.stock-notification-list { display: grid; max-height: min(52vh, 420px); gap: 8px; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
+.stock-notification-item { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; }
+.stock-notification-indicator { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: #d89b3d; }
+.stock-notification-indicator.out { background: #c85151; }
+.stock-notification-copy { display: grid; min-width: 0; gap: 4px; }
+.stock-notification-copy strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.stock-notification-copy small { color: var(--muted); font-size: 9px; }
+.stock-notification-status { margin-left: auto; color: #89682d; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.stock-notification-status.out { color: #a53e3e; }
+.notification-empty { min-height: 130px; }
 .mobile-menu-button { display: none; }
 .page-content { width: min(1160px, 100%); margin: 0 auto; padding: 35px 40px 50px; }
 .app-shell.cashier-mode .sidebar, .app-shell.cashier-mode .topbar, .app-shell.cashier-mode .mobile-scrim { display: none; }
