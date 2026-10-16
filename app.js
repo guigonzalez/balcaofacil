@@ -292,6 +292,7 @@ async function commitCloudState(nextState, successMessage, productImageChanges =
 }
 
 function updateShell() {
+  const attendant = state?.cloud && state.role === "attendant";
   $(".store-avatar").textContent = initials(state.storeName) || "L";
   if (state?.cloud) {
     $("#store-name").textContent = state.storeName;
@@ -329,10 +330,38 @@ function updateShell() {
   cashierFab.title = cashierMode ? "Voltar à tela anterior" : "Ativar Modo Caixa";
   $("#cashier-fab-label").textContent = cashierMode ? "Voltar à tela anterior" : "Modo Caixa";
   $("#cashflow-nav").hidden = !canManageCashFlow();
+  $$(".nav-link").forEach(link => {
+    link.hidden = attendant && !["pdv", "produtos"].includes(link.dataset.page);
+    if (link.dataset.page === "produtos") {
+      const label = link.querySelector("span:not(.nav-icon):not(.nav-shortcut):not(.nav-count)");
+      if (label) label.textContent = attendant ? "Estoque" : "Produtos";
+    }
+  });
+  $(".store-menu").hidden = attendant;
+  $(".help-card").hidden = attendant;
+  $(".profile-button").hidden = attendant;
+  const accountButton = $(".topbar-avatar");
+  if (attendant) {
+    accountButton.dataset.action = "sign-out";
+    accountButton.setAttribute("aria-label", "Sair da conta");
+    accountButton.title = "Sair da conta";
+  } else {
+    accountButton.dataset.action = "settings";
+    accountButton.setAttribute("aria-label", state?.cloud ? "Configurações da conta" : "Configurações da demonstração");
+    accountButton.removeAttribute("title");
+  }
 }
 
 function canManageCashFlow() {
   return !state?.cloud || ["owner", "admin"].includes(state.role);
+}
+
+function canManageCatalog() {
+  return !state?.cloud || ["owner", "admin"].includes(state.role);
+}
+
+function canAccessPage(page) {
+  return !state?.cloud || state.role !== "attendant" || ["pdv", "produtos"].includes(page);
 }
 
 function pageHeading(eyebrow, title, subtitle, action = "") {
@@ -500,17 +529,35 @@ function stockPill(product) {
 }
 
 function renderProducts() {
-  const allProducts = state.products.filter(product => productFilter === "all" || product.active === (productFilter === "active"));
+  const canManage = canManageCatalog();
+  const allProducts = state.products.filter(product => canManage
+    ? productFilter === "all" || product.active === (productFilter === "active")
+    : product.active);
   const filtered = allProducts.filter(product => `${product.name} ${product.sku} ${product.category}`.toLocaleLowerCase("pt-BR").includes(productQuery.toLocaleLowerCase("pt-BR")));
-  const action = `<button class="button button-primary" type="button" data-action="add-product"><span class="button-icon">＋</span> Novo produto</button>`;
+  const action = canManage ? `<button class="button button-primary" type="button" data-action="add-product"><span class="button-icon">＋</span> Novo produto</button>` : "";
   const rows = filtered.map(product => {
     const [emoji, color] = artFor(product.name);
-    return `<tr><td><div class="product-cell-name">${productImageSource(product) ? productThumbMarkup(product, "product-thumb", color) : `<span class="product-thumb ${color}">${emoji}</span>`}<div><strong>${escapeHTML(product.name)}</strong><div class="stock-sku">${escapeHTML(product.sku || "Sem código")}</div></div></div></td><td>${escapeHTML(product.category)}</td><td><strong>${money(product.price)}</strong></td><td>${product.cost === null ? "—" : money(product.cost)}</td><td>${stockPill(product)}</td><td><div class="row-actions"><button class="table-action" type="button" data-action="adjust-stock" data-id="${escapeHTML(product.id)}">Ajustar</button><button class="table-action" type="button" data-action="edit-product" data-id="${escapeHTML(product.id)}">Editar</button><button class="table-action ${product.active ? "danger" : ""}" type="button" data-action="toggle-product" data-id="${escapeHTML(product.id)}">${product.active ? "Arquivar" : "Ativar"}</button></div></td></tr>`;
+    const actions = canManage
+      ? `<td><div class="row-actions"><button class="table-action" type="button" data-action="adjust-stock" data-id="${escapeHTML(product.id)}">Ajustar</button><button class="table-action" type="button" data-action="edit-product" data-id="${escapeHTML(product.id)}">Editar</button><button class="table-action ${product.active ? "danger" : ""}" type="button" data-action="toggle-product" data-id="${escapeHTML(product.id)}">${product.active ? "Arquivar" : "Ativar"}</button></div></td>`
+      : "";
+    return `<tr><td><div class="product-cell-name">${productImageSource(product) ? productThumbMarkup(product, "product-thumb", color) : `<span class="product-thumb ${color}">${emoji}</span>`}<div><strong>${escapeHTML(product.name)}</strong><div class="stock-sku">${escapeHTML(product.sku || "Sem código")}</div></div></div></td><td>${escapeHTML(product.category)}</td>${canManage ? `<td><strong>${money(product.price)}</strong></td><td>${product.cost === null ? "—" : money(product.cost)}</td>` : ""}<td>${stockPill(product)}</td>${actions}</tr>`;
   }).join("");
-  pageContent.innerHTML = `${pageHeading("CATÁLOGO DA LOJA", "Produtos", "Cuide do seu catálogo e mantenha o estoque sempre atualizado.", action)}
-    <div class="detail-strip"><div class="detail-stat"><span>Produtos ativos</span><strong>${state.products.filter(product => product.active).length}</strong></div><div class="detail-stat"><span>Estoque baixo</span><strong>${state.products.filter(product => product.active && product.stock <= product.lowStock).length}</strong></div><div class="detail-stat"><span>Valor em estoque</span><strong>${money(state.products.filter(product => product.active).reduce((sum, product) => sum + product.price * product.stock, 0))}</strong></div></div>
-    <section class="panel"><div class="list-toolbar"><label class="search-box">${iconMarkup("search")}<input id="product-search" type="search" placeholder="Buscar produto ou código..." value="${escapeHTML(productQuery)}" aria-label="Buscar produto ou código"></label><span class="toolbar-spacer"></span><select class="select-control" id="product-filter" aria-label="Filtrar produtos"><option value="active"${productFilter === "active" ? " selected" : ""}>Produtos ativos</option><option value="all"${productFilter === "all" ? " selected" : ""}>Todos os produtos</option><option value="inactive"${productFilter === "inactive" ? " selected" : ""}>Arquivados</option></select><button class="button button-secondary button-small" type="button" data-action="manage-categories">Categorias</button><button class="button button-secondary button-small" type="button" data-action="adjust-stock-list">↕ Ajustar estoque</button></div>
-      <div class="table-wrap"><table><thead><tr><th>PRODUTO</th><th>CATEGORIA</th><th>PREÇO DE VENDA</th><th>CUSTO</th><th>ESTOQUE</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="6"><div class="empty-state"><div><span class="empty-symbol">⌕</span><strong>Nenhum produto encontrado</strong><p>Tente outra busca ou cadastre um novo produto.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "produto" : "produtos"} exibidos</div></section>`;
+  const title = canManage ? "Produtos" : "Estoque";
+  const subtitle = canManage ? "Cuide do seu catálogo e mantenha o estoque sempre atualizado." : "Consulte o saldo dos produtos disponíveis para venda.";
+  const inventoryStats = canManage
+    ? `<div class="detail-stat"><span>Valor em estoque</span><strong>${money(state.products.filter(product => product.active).reduce((sum, product) => sum + product.price * product.stock, 0))}</strong></div>`
+    : "";
+  const filter = canManage
+    ? `<select class="select-control" id="product-filter" aria-label="Filtrar produtos"><option value="active"${productFilter === "active" ? " selected" : ""}>Produtos ativos</option><option value="all"${productFilter === "all" ? " selected" : ""}>Todos os produtos</option><option value="inactive"${productFilter === "inactive" ? " selected" : ""}>Arquivados</option></select><button class="button button-secondary button-small" type="button" data-action="manage-categories">Categorias</button><button class="button button-secondary button-small" type="button" data-action="adjust-stock-list">↕ Ajustar estoque</button>`
+    : "";
+  const columns = canManage
+    ? "<th>PRODUTO</th><th>CATEGORIA</th><th>PREÇO DE VENDA</th><th>CUSTO</th><th>ESTOQUE</th><th></th>"
+    : "<th>PRODUTO</th><th>CATEGORIA</th><th>ESTOQUE</th>";
+  const colspan = canManage ? 6 : 3;
+  pageContent.innerHTML = `${pageHeading(canManage ? "CATÁLOGO DA LOJA" : "ESTOQUE DA LOJA", title, subtitle, action)}
+    <div class="detail-strip"><div class="detail-stat"><span>Produtos ativos</span><strong>${state.products.filter(product => product.active).length}</strong></div><div class="detail-stat"><span>Estoque baixo</span><strong>${state.products.filter(product => product.active && product.stock <= product.lowStock).length}</strong></div>${inventoryStats}</div>
+    <section class="panel"><div class="list-toolbar"><label class="search-box">${iconMarkup("search")}<input id="product-search" type="search" placeholder="Buscar produto ou código..." value="${escapeHTML(productQuery)}" aria-label="Buscar produto ou código"></label><span class="toolbar-spacer"></span>${filter}</div>
+      <div class="table-wrap"><table><thead><tr>${columns}</tr></thead><tbody>${rows || `<tr><td colspan="${colspan}"><div class="empty-state"><div><span class="empty-symbol">⌕</span><strong>Nenhum produto encontrado</strong><p>Tente outra busca ou cadastre um produto.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "produto" : "produtos"} exibidos</div></section>`;
 }
 
 function renderSales() {
@@ -642,6 +689,10 @@ function renderPage() {
 
 async function navigate(page) {
   if (!["inicio", "pdv", "produtos", "vendas", "caixa", "analises", "clientes"].includes(page)) return;
+  if (!canAccessPage(page)) {
+    page = "pdv";
+    showToast("Seu perfil pode acessar apenas a frente de caixa e o estoque.", "error");
+  }
   if (page === "caixa" && !canManageCashFlow()) return;
   const loadSequence = ++pageLoadSequence;
   currentPage = page;
@@ -1462,6 +1513,7 @@ async function activateCloudUser(user) {
     }
     state = result.state;
     storeRole = result.state.role;
+    if (!canAccessPage(currentPage)) currentPage = "pdv";
     updateShell();
     authScreen.hidden = true;
     appShell.hidden = false;
@@ -1726,8 +1778,8 @@ document.addEventListener("click", async event => {
   if (!actionButton) return;
   const { action, id } = actionButton.dataset;
   if (action === "close-dialog") closeDialog();
-  else if (action === "receipt-done") { closeDialog(); navigate("vendas"); }
-  else if (action === "settings") settingsDialog();
+  else if (action === "receipt-done") { closeDialog(); navigate(state?.role === "attendant" ? "pdv" : "vendas"); }
+  else if (action === "settings" && (!state?.cloud || ["owner", "admin"].includes(state.role))) settingsDialog();
   else if (action === "toggle-cashier-mode") toggleCashierMode();
   else if (action === "delete-store" && state?.role === "owner") dataDeletionDialog("delete-store");
   else if (action === "delete-account" && state?.cloud) dataDeletionDialog("delete-account");
@@ -1741,15 +1793,15 @@ document.addEventListener("click", async event => {
   else if (action === "resend-team-invite" && ["owner", "admin"].includes(state?.role)) await resendTeamInvite(id, actionButton);
   else if (action === "remove-team-member" && ["owner", "admin"].includes(state?.role)) removeTeamMemberDialog(id, actionButton.dataset.email);
   else if (action === "confirm-remove-team-member" && ["owner", "admin"].includes(state?.role)) await removeTeamMember(id, actionButton);
-  else if (action === "open-kyte-import") kyteImportDialog();
-  else if (action === "back-kyte-import") kyteImportDialog();
-  else if (action === "confirm-kyte-import") executeKyteImport(actionButton);
+  else if (action === "open-kyte-import" && canManageCatalog()) kyteImportDialog();
+  else if (action === "back-kyte-import" && canManageCatalog()) kyteImportDialog();
+  else if (action === "confirm-kyte-import" && canManageCatalog()) executeKyteImport(actionButton);
   else if (action === "sale-details") {
     const sale = state.sales.find(item => item.id === id && item.importSource);
     if (sale) importedSaleDetailsDialog(sale);
   }
-  else if (action === "manage-categories") categoryManagerDialog();
-  else if (action === "delete-category") {
+  else if (action === "manage-categories" && canManageCatalog()) categoryManagerDialog();
+  else if (action === "delete-category" && canManageCatalog()) {
     const productCount = state.products.filter(product => product.category === id).length;
     if (productCount) return showToast("Reclassifique os produtos antes de apagar esta categoria.", "error");
     if (state.categories.length <= 1) return showToast("Mantenha ao menos uma categoria cadastrada.", "error");
@@ -1760,24 +1812,24 @@ document.addEventListener("click", async event => {
       categoryManagerDialog();
     }
   }
-  else if (action === "add-product") productForm();
-  else if (action === "edit-product") productForm(state.products.find(product => product.id === id));
-  else if (action === "toggle-product") {
+  else if (action === "add-product" && canManageCatalog()) productForm();
+  else if (action === "edit-product" && canManageCatalog()) productForm(state.products.find(product => product.id === id));
+  else if (action === "toggle-product" && canManageCatalog()) {
     const current = structuredClone(state);
     const product = current.products.find(item => item.id === id);
     if (!product) return showToast("Produto não encontrado.", "error");
     product.active = !product.active;
     await commit(current, product.active ? "Produto ativado." : "Produto arquivado.");
-  } else if (action === "adjust-stock") adjustStockDialog(state.products.find(product => product.id === id));
-  else if (action === "adjust-stock-list") adjustStockDialog();
-  else if (action === "add-customer") customerForm();
-  else if (action === "edit-customer") { closeDialog(); customerForm(state.customers.find(customer => customer.id === id)); }
-  else if (action === "customer-history") showCustomerHistory(id);
+  } else if (action === "adjust-stock" && canManageCatalog()) adjustStockDialog(state.products.find(product => product.id === id));
+  else if (action === "adjust-stock-list" && canManageCatalog()) adjustStockDialog();
+  else if (action === "add-customer" && canManageCatalog()) customerForm();
+  else if (action === "edit-customer" && canManageCatalog()) { closeDialog(); customerForm(state.customers.find(customer => customer.id === id)); }
+  else if (action === "customer-history" && canManageCatalog()) showCustomerHistory(id);
   else if (action === "add-to-cart") addToCart(id);
   else if (action === "cart-quantity") changeCartQuantity(id, Number(actionButton.dataset.delta));
   else if (action === "clear-cart") { cart = []; renderPOS(); }
   else if (action === "checkout") checkoutDialog();
-  else if (action === "cancel-sale") {
+  else if (action === "cancel-sale" && canManageCatalog()) {
     const sale = state.sales.find(item => item.id === id);
     if (sale) cancelSaleDialog(sale);
   }   else if (action === "reset-demo") confirmResetDemo();
@@ -1816,7 +1868,7 @@ document.addEventListener("submit", async event => {
     }
   } else if (formId === "invite-form") {
     await inviteTeamMember(event.target);
-  } else if (formId === "kyte-import-form") {
+  } else if (formId === "kyte-import-form" && canManageCatalog()) {
     try {
       const data = new FormData(event.target);
       const productsFile = data.get("products");
@@ -1842,7 +1894,7 @@ document.addEventListener("submit", async event => {
       console.error("Não foi possível ler os arquivos do Kyte.", error);
       kyteImportDialog(error.message || "Não foi possível ler o arquivo CSV.");
     }
-  } else if (formId === "category-form") {
+  } else if (formId === "category-form" && canManageCatalog()) {
     const name = String(new FormData(event.target).get("name") || "").trim();
     if (!name || name.length > 40 || name.toLocaleLowerCase("pt-BR") === "todos") return showToast("Informe um nome de categoria válido (até 40 caracteres).", "error");
     if (state.categories.some(category => category.toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR"))) {
@@ -1853,11 +1905,11 @@ document.addEventListener("submit", async event => {
     if (await commit(current, `Categoria “${name}” cadastrada.`)) categoryManagerDialog();
   } else if (formId === "cash-entry-form" && canManageCashFlow()) {
     await handleCashEntrySubmit(event.target);
-  } else if (formId === "product-form") await handleProductSubmit(event.target);
-  else if (formId === "customer-form") await handleCustomerSubmit(event.target);
-  else if (formId === "stock-form") await handleStockSubmit(event.target);
+  } else if (formId === "product-form" && canManageCatalog()) await handleProductSubmit(event.target);
+  else if (formId === "customer-form" && canManageCatalog()) await handleCustomerSubmit(event.target);
+  else if (formId === "stock-form" && canManageCatalog()) await handleStockSubmit(event.target);
   else if (formId === "checkout-form") await completeSale(event.target);
-  else if (formId === "cancel-sale-form") await handleCancelSale(event.target);
+  else if (formId === "cancel-sale-form" && canManageCatalog()) await handleCancelSale(event.target);
   else if (formId === "settings-form") {
     const data = new FormData(event.target);
     const name = String(data.get("storeName") || "").trim();

@@ -39,6 +39,7 @@ button:disabled { cursor: not-allowed !important; opacity: .46; }
 .nav-caption { margin: 32px 0 10px 10px; color: #a1aaa5; font-size: 9px; font-weight: 700; letter-spacing: 1.2px; }
 .main-nav { display: grid; gap: 5px; }
 .nav-link { position: relative; display: flex; height: 43px; align-items: center; gap: 12px; padding: 0 11px; border: 0; border-radius: 9px; color: #717c76; background: transparent; cursor: pointer; text-align: left; font-size: 12px; font-weight: 500; transition: background .15s, color .15s; }
+.nav-link[hidden], .store-menu[hidden], .help-card[hidden], .profile-button[hidden] { display: none; }
 .nav-link:hover { color: var(--ink); background: #f7f8f6; }
 .nav-link.is-active { color: var(--accent); background: var(--accent-soft); font-weight: 700; }
 .nav-icon, [data-icon] { display: inline-grid; width: 18px; height: 18px; flex: 0 0 auto; place-items: center; }

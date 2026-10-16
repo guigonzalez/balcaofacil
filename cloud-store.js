@@ -96,10 +96,13 @@ export function createCloudStore(url, anonKey) {
       .eq("id", storeId)
       .single());
 
-    const productsQuery = () => client.from("products")
-      .select("id, import_source_key, image_path, name, sku, category, price_cents, cost_cents, stock, low_stock, active")
-      .eq("store_id", storeId)
-      .order("created_at");
+    const productsQuery = () => {
+      let query = client.from("products")
+        .select("id, import_source_key, image_path, name, sku, category, price_cents, cost_cents, stock, low_stock, active")
+        .eq("store_id", storeId);
+      if (membership.role === "attendant") query = query.eq("active", true);
+      return query.order("created_at");
+    };
     const categoriesQuery = () => client.from("product_categories").select("name").eq("store_id", storeId).order("created_at");
     const customersQuery = () => client.from("customers")
       .select("id, name, phone, email, created_at")
@@ -116,8 +119,8 @@ export function createCloudStore(url, anonKey) {
       fetchAll(productsQuery),
       fetchAll(categoriesQuery),
       fetchAll(customersQuery),
-      fetchAll(salesQuery),
-      fetchAll(itemsQuery)
+      membership.role === "attendant" ? [] : fetchAll(salesQuery),
+      membership.role === "attendant" ? [] : fetchAll(itemsQuery)
     ]);
     const itemsBySale = new Map();
     for (const item of items) {
