@@ -86,6 +86,7 @@ button:disabled { cursor: not-allowed !important; opacity: .46; }
 .cashier-fab-icon, .cashier-fab-icon svg { display: grid; width: 19px; height: 19px; place-items: center; }
 .cashier-fab-icon svg { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .app-shell.cashier-mode .cashier-fab { top: 16px; right: 24px; bottom: auto; }
+.sale-observation { max-width: 240px; overflow: hidden; color: var(--muted); font-size: 9px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 25px; }
 .eyebrow { margin: 0 0 7px; color: #8b9690; font-size: 10px; font-weight: 600; letter-spacing: .8px; text-transform: uppercase; }
 h1, h2, h3, p { margin-top: 0; }
@@ -296,6 +297,8 @@ td strong { color: var(--ink); font-weight: 600; }
 .receipt-box { margin-bottom: 16px; padding: 13px; border: 1px dashed #dfe6e0; border-radius: 9px; text-align: left; }
 .receipt-row { display: flex; justify-content: space-between; gap: 12px; margin: 6px 0; color: #707b74; font-size: 10px; }
 .receipt-row strong { color: var(--ink); }
+.receipt-observation { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--ink); font-size: 10px; }
+.receipt-observation p { margin: 4px 0 0; color: var(--muted); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .receipt-success .button { width: 100%; }
 .mobile-scrim { display: none; }
 .auth-screen { display: grid; min-height: 100vh; place-items: center; padding: 24px; background: radial-gradient(ellipse at 50% 0%, #ededed 0%, var(--canvas) 58%); }
@@ -318,6 +321,22 @@ td strong { color: var(--ink); font-weight: 600; }
 .settings-section-title { margin: 18px 0 12px; color: #58645d; font-size: 10px; font-weight: 700; }
 .invite-form { margin-top: 15px; padding-top: 2px; border-top: 1px solid var(--line); }
 .invite-form .dialog-actions { margin-top: 12px; padding-top: 0; border-top: 0; }
+.team-management { margin-top: 17px; padding-top: 2px; border-top: 1px solid var(--line); }
+.team-management .settings-section-title { margin-bottom: 5px; }
+.team-description, .team-empty { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.team-members-list { display: grid; max-height: 280px; gap: 7px; overflow-y: auto; margin: 11px 0 0; padding: 0; list-style: none; }
+.team-empty { padding: 8px 0; }
+.team-error { color: var(--red); }
+.team-member-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.team-member-info { display: grid; min-width: 0; gap: 5px; }
+.team-member-info > strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.team-member-info > span { color: var(--muted); font-size: 9px; }
+.team-status { color: #4f6656; }
+.team-status.pending { color: #89682d; }
+.team-member-controls { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 7px; }
+.team-role-label { color: var(--muted); font-size: 9px; white-space: nowrap; }
+.team-role-select { height: 32px; max-width: 130px; padding: 0 7px; font-size: 9px; }
+.team-member-controls .table-action { min-height: 32px; padding: 0 7px; font-size: 9px; }
 .destructive-settings { display: grid; gap: 9px; margin-top: 17px; padding: 13px; border: 1px solid #eadada; border-radius: 9px; }
 .destructive-settings .settings-section-title { margin: 0; color: var(--red); }
 .destructive-settings > p:not(.settings-section-title), .deletion-warning { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.6; }
@@ -417,14 +436,33 @@ td strong { color: var(--ink); font-weight: 600; }
   .app-shell.cashier-mode .pos-main { height: 100%; max-height: none; min-height: 0; overflow-y: auto; }
   .app-shell.cashier-mode .pos-toolbar { display: grid; gap: 7px; margin-bottom: 8px; }
   .app-shell.cashier-mode .pos-toolbar .search-box { width: 100%; }
-  .app-shell.cashier-mode .pos-product-grid { grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); gap: 7px; }
-  .app-shell.cashier-mode .pos-product-card { min-height: 155px; padding: 7px; }
-  .app-shell.cashier-mode .pos-product-visual, .app-shell.cashier-mode .pos-product-visual.product-photo { height: 78px; min-height: 78px; }
+  .app-shell.cashier-mode .pos-toolbar .search-box { min-height: 48px; padding: 0 13px; }
+  .app-shell.cashier-mode .pos-toolbar .search-box input { font-size: 16px; }
+  .app-shell.cashier-mode .category-list { gap: 9px; padding-bottom: 5px; }
+  .app-shell.cashier-mode .category-chip { min-height: 44px; padding: 0 15px; font-size: 12px; }
+  .app-shell.cashier-mode .pos-product-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .app-shell.cashier-mode .pos-product-card { min-height: 190px; padding: 10px; }
+  .app-shell.cashier-mode .pos-product-visual, .app-shell.cashier-mode .pos-product-visual.product-photo { height: 96px; min-height: 96px; }
+  .app-shell.cashier-mode .pos-product-name { font-size: 12px; }
+  .app-shell.cashier-mode .pos-product-price { font-size: 13px; }
+  .app-shell.cashier-mode .pos-product-stock { font-size: 10px; }
   .app-shell.cashier-mode .cart-panel { position: static; display: grid; height: 100%; min-height: 0; max-height: none; grid-template-rows: auto minmax(0, 1fr) auto; }
-  .app-shell.cashier-mode .cart-body { min-height: 0; max-height: none; padding: 5px 12px; }
-  .app-shell.cashier-mode .cart-footer { padding: 9px 12px; }
-  .app-shell.cashier-mode .cart-customer { margin-bottom: 8px; }
-  .app-shell.cashier-mode .cart-totals { gap: 5px; margin-bottom: 8px; }
+  .app-shell.cashier-mode .cart-panel .panel-header { min-height: 48px; padding: 10px 14px; }
+  .app-shell.cashier-mode .cart-panel .panel-title { font-size: 14px; }
+  .app-shell.cashier-mode .cart-panel .panel-header .table-action { min-height: 40px; padding: 0 12px; font-size: 11px; }
+  .app-shell.cashier-mode .cart-body { min-height: 0; max-height: none; padding: 6px 14px; }
+  .app-shell.cashier-mode .cart-item { gap: 7px 10px; padding: 12px 0; }
+  .app-shell.cashier-mode .cart-item-title, .app-shell.cashier-mode .cart-item-total { font-size: 12px; }
+  .app-shell.cashier-mode .quantity-control { gap: 10px; }
+  .app-shell.cashier-mode .quantity-control button { width: 40px; height: 40px; border-radius: 9px; font-size: 20px; }
+  .app-shell.cashier-mode .quantity-control span { min-width: 18px; font-size: 13px; }
+  .app-shell.cashier-mode .cart-footer { padding: 12px 14px; }
+  .app-shell.cashier-mode .cart-customer { min-height: 48px; margin-bottom: 11px; padding: 0 12px; font-size: 12px; }
+  .app-shell.cashier-mode .cart-customer select { font-size: 14px; }
+  .app-shell.cashier-mode .cart-totals { gap: 8px; margin-bottom: 11px; }
+  .app-shell.cashier-mode .cart-total-row { font-size: 12px; }
+  .app-shell.cashier-mode .cart-total-row.grand { font-size: 15px; }
+  .app-shell.cashier-mode .checkout-button { min-height: 54px; font-size: 14px; }
   .app-shell.cashier-mode .helper-note { display: none; }
   .detail-strip { grid-template-columns: 1fr; }
   .detail-stat { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -439,6 +477,8 @@ td strong { color: var(--ink); font-weight: 600; }
   .product-image-controls input[type="file"] { max-width: 205px; }
   .page-heading { flex-wrap: wrap; }
   .page-heading > .button { margin-left: auto; }
+  .team-member-row { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .team-member-controls { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

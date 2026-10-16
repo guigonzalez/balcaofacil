@@ -367,7 +367,7 @@ function recentSalesTable(sales, limit = 5) {
   const rows = [...sales].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, limit);
   if (!rows.length) return `<div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Nenhuma venda por aqui</strong><p>Assim que você registrar uma venda, ela aparece aqui.</p></div></div>`;
   return `<div class="table-wrap"><table><thead><tr><th>VENDA</th><th>CLIENTE</th><th>DATA E HORA</th><th>PAGAMENTO</th><th>VALOR</th><th>STATUS</th></tr></thead><tbody>${rows.map(sale => `<tr>
-    <td><strong>${escapeHTML(sale.id)}</strong></td>
+    <td><strong>${escapeHTML(sale.id)}</strong>${sale.observation ? `<div class="sale-observation" title="${escapeHTML(sale.observation)}">Obs.: ${escapeHTML(sale.observation)}</div>` : ""}</td>
     <td>${escapeHTML(customerName(sale.customerId, sale.customerName))}</td>
     <td>${escapeHTML(formatDate(sale.date, true))}</td>
     <td>${escapeHTML(sale.payment)}</td>
@@ -516,7 +516,7 @@ function renderProducts() {
 function renderSales() {
   const filtered = [...state.sales].filter(sale => {
     const statusMatches = salesFilter === "all" || sale.status === salesFilter;
-    const queryMatches = `${sale.id} ${sale.importReference ?? ""} ${sale.importDetails ?? ""} ${customerName(sale.customerId, sale.customerName)} ${sale.payment}`.toLocaleLowerCase("pt-BR").includes(salesQuery.toLocaleLowerCase("pt-BR"));
+    const queryMatches = `${sale.id} ${sale.importReference ?? ""} ${sale.importDetails ?? ""} ${sale.observation ?? ""} ${customerName(sale.customerId, sale.customerName)} ${sale.payment}`.toLocaleLowerCase("pt-BR").includes(salesQuery.toLocaleLowerCase("pt-BR"));
     const periodStart = new Date();
     periodStart.setHours(0, 0, 0, 0);
     if (salesPeriod === "7d") periodStart.setDate(periodStart.getDate() - 6);
@@ -531,7 +531,7 @@ function renderSales() {
     <div class="detail-strip"><div class="detail-stat"><span>Vendas concluídas</span><strong>${state.sales.filter(sale => sale.status === "completed").length}</strong></div><div class="detail-stat"><span>Faturamento total</span><strong>${money(saleRevenue(state.sales))}</strong></div><div class="detail-stat"><span>Cancelamentos</span><strong>${state.sales.filter(sale => sale.status === "cancelled").length}</strong></div></div>
     <section class="panel"><div class="list-toolbar"><label class="search-box">${iconMarkup("search")}<input id="sales-search" type="search" placeholder="Buscar venda ou cliente..." value="${escapeHTML(salesQuery)}" aria-label="Buscar venda ou cliente"></label><span class="toolbar-spacer"></span><select class="select-control" id="sales-period" aria-label="Filtrar por período"><option value="all"${salesPeriod === "all" ? " selected" : ""}>Qualquer data</option><option value="today"${salesPeriod === "today" ? " selected" : ""}>Hoje</option><option value="7d"${salesPeriod === "7d" ? " selected" : ""}>Últimos 7 dias</option><option value="30d"${salesPeriod === "30d" ? " selected" : ""}>Últimos 30 dias</option></select></div>
       <div class="filter-tabs" role="group" aria-label="Filtrar vendas"><button class="filter-tab${salesFilter === "all" ? " is-selected" : ""}" type="button" data-sales-filter="all">Todas</button><button class="filter-tab${salesFilter === "completed" ? " is-selected" : ""}" type="button" data-sales-filter="completed">Concluídas</button><button class="filter-tab${salesFilter === "cancelled" ? " is-selected" : ""}" type="button" data-sales-filter="cancelled">Canceladas</button></div>
-      <div class="table-wrap"><table><thead><tr><th>VENDA</th><th>CLIENTE</th><th>DATA E HORA</th><th>PAGAMENTO</th><th>VALOR</th><th>STATUS</th><th></th></tr></thead><tbody>${filtered.length ? filtered.map(sale => `<tr><td><strong>${escapeHTML(sale.id)}</strong>${sale.importReference ? `<div class="stock-sku">Kyte #${escapeHTML(sale.importReference)}</div>` : ""}</td><td>${escapeHTML(customerName(sale.customerId, sale.customerName))}</td><td>${escapeHTML(formatDate(sale.date, true))}</td><td>${escapeHTML(sale.payment)}</td><td><strong>${money(sale.total)}</strong>${sale.discountCents ? `<div class="stock-sku">Subtotal ${money(sale.subtotalCents ?? sale.total + sale.discountCents)} · desconto ${escapeHTML(saleDiscountLabel(sale))}</div>` : ""}</td><td><span class="status-pill${sale.status === "cancelled" ? " cancelled" : ""}">${sale.status === "completed" ? "Concluída" : "Cancelada"}</span></td><td>${sale.importSource ? `<button class="table-action" type="button" data-action="sale-details" data-id="${escapeHTML(sale.id)}">Detalhes</button>` : sale.status === "completed" ? `<button class="table-action danger" type="button" data-action="cancel-sale" data-id="${escapeHTML(sale.id)}">Cancelar</button>` : `<span class="customer-contact" title="${escapeHTML(sale.cancelReason)}">Devolvida</span>`}</td></tr>`).join("") : `<tr><td colspan="7"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Nenhuma venda encontrada</strong><p>Experimente buscar por outro termo.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "venda" : "vendas"} exibidas · faturamento considera somente vendas concluídas</div></section>`;
+      <div class="table-wrap"><table><thead><tr><th>VENDA</th><th>CLIENTE</th><th>DATA E HORA</th><th>PAGAMENTO</th><th>VALOR</th><th>STATUS</th><th></th></tr></thead><tbody>${filtered.length ? filtered.map(sale => `<tr><td><strong>${escapeHTML(sale.id)}</strong>${sale.importReference ? `<div class="stock-sku">Kyte #${escapeHTML(sale.importReference)}</div>` : ""}${sale.observation ? `<div class="sale-observation" title="${escapeHTML(sale.observation)}">Obs.: ${escapeHTML(sale.observation)}</div>` : ""}</td><td>${escapeHTML(customerName(sale.customerId, sale.customerName))}</td><td>${escapeHTML(formatDate(sale.date, true))}</td><td>${escapeHTML(sale.payment)}</td><td><strong>${money(sale.total)}</strong>${sale.discountCents ? `<div class="stock-sku">Subtotal ${money(sale.subtotalCents ?? sale.total + sale.discountCents)} · desconto ${escapeHTML(saleDiscountLabel(sale))}</div>` : ""}</td><td><span class="status-pill${sale.status === "cancelled" ? " cancelled" : ""}">${sale.status === "completed" ? "Concluída" : "Cancelada"}</span></td><td>${sale.importSource ? `<button class="table-action" type="button" data-action="sale-details" data-id="${escapeHTML(sale.id)}">Detalhes</button>` : sale.status === "completed" ? `<button class="table-action danger" type="button" data-action="cancel-sale" data-id="${escapeHTML(sale.id)}">Cancelar</button>` : `<span class="customer-contact" title="${escapeHTML(sale.cancelReason)}">Devolvida</span>`}</td></tr>`).join("") : `<tr><td colspan="7"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>Nenhuma venda encontrada</strong><p>Experimente buscar por outro termo.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "venda" : "vendas"} exibidas · faturamento considera somente vendas concluídas</div></section>`;
 }
 
 function cashEntryDueDate(value) {
@@ -833,7 +833,7 @@ function checkoutDialog() {
   const customer = selectedCustomer ? state.customers.find(item => item.id === selectedCustomer)?.name : "";
   const items = cart.map(line => `<div class="checkout-summary-row"><span>${line.quantity}× ${escapeHTML(line.name)}</span><strong>${money(line.price * line.quantity)}</strong></div>`).join("");
   openDialog("Finalizar venda", "Confira os itens, aplique um desconto se necessário e registre o pagamento.", `<form id="checkout-form"><div class="checkout-summary">${items}<div class="checkout-summary-row"><span>Subtotal</span><strong id="checkout-subtotal">${money(total)}</strong></div><div class="checkout-summary-row" id="checkout-discount-row" hidden><span>Desconto</span><strong id="checkout-discount-value"></strong></div><div class="checkout-summary-row total"><span>Total a pagar</span><strong id="checkout-total">${money(total)}</strong></div></div>
-    <div class="form-grid"><div class="form-field"><label for="checkout-discount-type">Desconto da venda</label><select id="checkout-discount-type" name="discountType"><option value="none">Sem desconto</option><option value="percent">Porcentagem (%)</option><option value="amount">Valor em reais (R$)</option></select></div><div class="form-field"><label for="checkout-discount-input">Valor do desconto</label><input id="checkout-discount-input" name="discountValue" type="number" min="0" step="0.01" value="0" disabled></div>
+    <div class="form-grid"><div class="form-field full"><label for="checkout-observation">Observação da venda</label><textarea id="checkout-observation" name="observation" maxlength="500" rows="2" placeholder="Ex.: entregar à tarde, embalagem para presente"></textarea></div><div class="form-field"><label for="checkout-discount-type">Desconto da venda</label><select id="checkout-discount-type" name="discountType"><option value="none">Sem desconto</option><option value="percent">Porcentagem (%)</option><option value="amount">Valor em reais (R$)</option></select></div><div class="form-field"><label for="checkout-discount-input">Valor do desconto</label><input id="checkout-discount-input" name="discountValue" type="number" min="0" step="0.01" value="0" disabled></div>
     <div class="form-field"><label for="checkout-payment">Forma de pagamento *</label><select id="checkout-payment" name="payment" required><option>Dinheiro</option><option>Pix</option><option>Cartão de débito</option><option>Cartão de crédito</option><option>Outro</option></select></div><div class="form-field"><label for="checkout-customer">Cliente</label><input id="checkout-customer" value="${escapeHTML(customer || "Venda sem cliente")}" disabled></div></div><p class="field-hint" id="checkout-discount-error" role="alert" hidden></p>
     <p class="field-hint checkout-fee-hint" id="checkout-fee-estimate" aria-live="polite">Este registro não processa pagamentos. O valor é recebido fora do sistema.</p><div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Voltar</button><button class="button button-primary" id="checkout-confirm-button" type="submit">Confirmar venda · ${money(total)}</button></div></form>`);
   updateCheckoutFeeEstimate();
@@ -910,7 +910,7 @@ function receiptDialog(sale) {
   const rows = sale.items.map(item => `<div class="receipt-row"><span>${item.quantity}× ${escapeHTML(item.name)}</span><strong>${money(item.price * item.quantity)}</strong></div>`).join("");
   const subtotal = sale.subtotalCents ?? sale.total + (sale.discountCents ?? 0);
   const discount = sale.discountCents ?? 0;
-  dialogContent.innerHTML = `<div class="receipt-success"><span class="receipt-success-mark">✓</span><h2>Venda concluída!</h2><p>${escapeHTML(sale.id)} · ${escapeHTML(formatDate(sale.date, true))}</p><div class="receipt-box">${rows}${discount ? `<div class="receipt-row"><span>Subtotal</span><strong>${money(subtotal)}</strong></div><div class="receipt-row"><span>Desconto (${escapeHTML(saleDiscountLabel(sale))})</span><strong>− ${money(discount)}</strong></div>` : ""}<div class="receipt-row"><span>Pagamento</span><strong>${escapeHTML(sale.payment)}</strong></div><div class="receipt-row"><span>Total</span><strong>${money(sale.total)}</strong></div></div><button class="button button-primary" type="button" data-action="receipt-done">Concluir</button></div>`;
+  dialogContent.innerHTML = `<div class="receipt-success"><span class="receipt-success-mark">✓</span><h2>Venda concluída!</h2><p>${escapeHTML(sale.id)} · ${escapeHTML(formatDate(sale.date, true))}</p><div class="receipt-box">${rows}${discount ? `<div class="receipt-row"><span>Subtotal</span><strong>${money(subtotal)}</strong></div><div class="receipt-row"><span>Desconto (${escapeHTML(saleDiscountLabel(sale))})</span><strong>− ${money(discount)}</strong></div>` : ""}<div class="receipt-row"><span>Pagamento</span><strong>${escapeHTML(sale.payment)}</strong></div><div class="receipt-row"><span>Total</span><strong>${money(sale.total)}</strong></div>${sale.observation ? `<div class="receipt-observation"><strong>Observação</strong><p>${escapeHTML(sale.observation)}</p></div>` : ""}</div><button class="button button-primary" type="button" data-action="receipt-done">Concluir</button></div>`;
   dialog.showModal();
 }
 
@@ -939,6 +939,9 @@ function settingsDialog() {
   const inviteForm = cloudMode && ["owner", "admin"].includes(state.role)
     ? `<form id="invite-form" class="invite-form"><p class="settings-section-title">Convidar alguém para a equipe</p><div class="form-grid"><div class="form-field"><label for="invite-email">E-mail *</label><input id="invite-email" name="email" required type="email" maxlength="254" placeholder="pessoa@email.com"></div><div class="form-field"><label for="invite-role">Acesso *</label><select id="invite-role" name="role"><option value="attendant">Atendente</option><option value="admin">Administrador</option></select></div></div><div class="dialog-actions"><button class="button button-primary" type="submit">Enviar convite</button></div></form>`
     : "";
+  const teamManagement = cloudMode && ["owner", "admin"].includes(state.role)
+    ? `<section class="team-management"><p class="settings-section-title">Equipe da loja</p><p class="team-description">Gerencie os perfis e convites. Remover alguém revoga o acesso à loja, mas não apaga a conta da pessoa.</p><ul class="team-members-list" id="team-members-list" aria-live="polite"><li class="team-empty">Carregando pessoas da equipe…</li></ul></section>`
+    : "";
   const resetButton = cloudMode ? "" : `<button class="button button-danger button-small" type="button" data-action="reset-demo">Restaurar demonstração</button>`;
   const storeNameControl = state.role === "attendant"
     ? `<div class="form-field"><label>Nome da loja</label><input value="${escapeHTML(state.storeName)}" disabled></div>`
@@ -950,8 +953,9 @@ function settingsDialog() {
     : "Personalize a identificação da demonstração.";
   const descriptionNode = `<p>${escapeHTML(description)}</p>`;
   const importButton = state.role === "attendant" ? "" : `<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="open-kyte-import">Importar produtos e vendas do Kyte</button></div>`;
-  openDialog("Sua loja", "", `<form id="settings-form"><div class="form-grid">${storeNameControl}${feeSettings}</div><p class="field-hint" style="margin-top:12px">Percentuais editáveis usados apenas para estimar o custo das vendas no cartão. Não são taxas da adquirente nem alteram valores recebidos. Vendas antigas sem tipo de cartão não entram nesta estimativa.</p>${cloudMode ? "" : `<p class="field-hint" style="margin-top:12px">Seus dados ficam somente neste navegador. Para reiniciar a demonstração, use o botão abaixo.</p>`}<div class="dialog-actions" style="justify-content:space-between">${resetButton}<span style="display:flex;gap:8px"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button>${state.role === "attendant" ? "" : `<button class="button button-primary" type="submit">Salvar</button>`}</span></div></form>${importButton}${inviteForm}${deletionOptions}<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="sign-out">Sair da conta</button></div>`);
+  openDialog("Sua loja", "", `<form id="settings-form"><div class="form-grid">${storeNameControl}${feeSettings}</div><p class="field-hint" style="margin-top:12px">Percentuais editáveis usados apenas para estimar o custo das vendas no cartão. Não são taxas da adquirente nem alteram valores recebidos. Vendas antigas sem tipo de cartão não entram nesta estimativa.</p>${cloudMode ? "" : `<p class="field-hint" style="margin-top:12px">Seus dados ficam somente neste navegador. Para reiniciar a demonstração, use o botão abaixo.</p>`}<div class="dialog-actions" style="justify-content:space-between">${resetButton}<span style="display:flex;gap:8px"><button class="button button-secondary" type="button" data-action="close-dialog">Fechar</button>${state.role === "attendant" ? "" : `<button class="button button-primary" type="submit">Salvar</button>`}</span></div></form>${importButton}${inviteForm}${teamManagement}${deletionOptions}<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="sign-out">Sair da conta</button></div>`);
   $(".dialog-head p", dialogContent).textContent = descriptionNode.replace(/<[^>]+>/g, "");
+  if (teamManagement) loadTeamMembers();
 }
 
 function dataDeletionDialog(action) {
@@ -1170,6 +1174,7 @@ function changeCartQuantity(productId, delta) {
 async function completeSale(form) {
   const data = new FormData(form);
   const payment = String(data.get("payment") || "");
+  const observation = String(data.get("observation") || "").trim();
   const discountType = String(data.get("discountType") || "none");
   const rawDiscountValue = String(data.get("discountValue") || "").trim();
   const enteredDiscountValue = discountType === "amount"
@@ -1178,6 +1183,10 @@ async function completeSale(form) {
       ? (rawDiscountValue ? Number(rawDiscountValue) : 0)
       : 0;
   const subtotal = cart.reduce((sum, line) => sum + line.price * line.quantity, 0);
+  if (observation.length > 500) {
+    showToast("A observação deve ter até 500 caracteres.", "error");
+    return;
+  }
   let discountCents;
   try {
     if (discountType === "percent" && Math.round(enteredDiscountValue * 100) / 100 !== enteredDiscountValue) {
@@ -1206,6 +1215,7 @@ async function completeSale(form) {
     date: new Date().toISOString(),
     customerId: selectedCustomer,
     payment,
+    observation,
     status: "completed",
     items: cart.map(line => ({ ...line })),
     subtotalCents: subtotal,
@@ -1539,11 +1549,96 @@ async function inviteTeamMember(form) {
     });
     const result = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(result.error || "Não foi possível enviar o convite.");
-    closeDialog();
     showToast(`Convite enviado para ${email}.`);
+    form.reset();
+    await loadTeamMembers();
   } catch (error) {
     console.error("Não foi possível enviar o convite da equipe.", error);
     showToast(error.message || "Falha ao enviar o convite.", "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderTeamMembers(members) {
+  const list = $("#team-members-list");
+  if (!list) return;
+  if (!members.length) {
+    list.innerHTML = `<p class="team-empty">Ainda não há outras pessoas na equipe.</p>`;
+    return;
+  }
+  list.innerHTML = members.map(member => {
+    const isSelf = member.user_id === cloudUser?.id;
+    const isOwner = member.role === "owner";
+    const statusLabel = member.status === "pending" ? "Convite pendente" : "Ativo";
+    const roleLabel = member.role === "owner" ? "Proprietário" : member.role === "admin" ? "Administrador" : "Atendente";
+    const roleControl = isOwner || isSelf
+      ? `<span class="team-role-label">${roleLabel}${isSelf ? " · você" : ""}</span>`
+      : `<select class="select-control team-role-select" data-team-role="${escapeHTML(member.user_id)}" aria-label="Perfil de ${escapeHTML(member.email)}"><option value="attendant"${member.role === "attendant" ? " selected" : ""}>Atendente</option><option value="admin"${member.role === "admin" ? " selected" : ""}>Administrador</option></select>`;
+    const resendButton = member.status === "pending"
+      ? `<button class="table-action" type="button" data-action="resend-team-invite" data-id="${escapeHTML(member.user_id)}">Reenviar convite</button>`
+      : "";
+    const removeButton = isOwner || isSelf
+      ? ""
+      : `<button class="table-action danger" type="button" data-action="remove-team-member" data-id="${escapeHTML(member.user_id)}" data-email="${escapeHTML(member.email)}">Remover</button>`;
+    return `<li class="team-member-row"><div class="team-member-info"><strong>${escapeHTML(member.email || "E-mail indisponível")}${isSelf ? " · você" : ""}</strong><span><span class="team-status${member.status === "pending" ? " pending" : ""}">${statusLabel}</span>${isOwner ? "" : ` · Adicionado ${escapeHTML(formatDate(member.joined_at))}`}</span></div><div class="team-member-controls">${roleControl}${resendButton}${removeButton}</div></li>`;
+  }).join("");
+}
+
+async function loadTeamMembers() {
+  const list = $("#team-members-list");
+  if (!list || !cloudStore || !["owner", "admin"].includes(state?.role)) return;
+  list.innerHTML = `<p class="team-empty">Carregando pessoas da equipe…</p>`;
+  try {
+    const result = await cloudStore.manageTeam("list", { storeId: state.storeId });
+    if ($("#team-members-list") === list) renderTeamMembers(result.members);
+  } catch (error) {
+    console.error("Não foi possível carregar a equipe da loja.", error);
+    if ($("#team-members-list") === list) {
+      list.innerHTML = `<p class="team-empty team-error">${escapeHTML(error.message || "Não foi possível carregar a equipe.")}</p><button class="button button-secondary button-small" type="button" data-action="reload-team">Tentar novamente</button>`;
+    }
+  }
+}
+
+async function updateTeamMemberRole(userId, role, select) {
+  select.disabled = true;
+  try {
+    await cloudStore.manageTeam("update-role", { storeId: state.storeId, userId, role });
+    showToast("Perfil da equipe atualizado.");
+    await loadTeamMembers();
+  } catch (error) {
+    console.error("Não foi possível atualizar o perfil da equipe.", error);
+    showToast(error.message || "Não foi possível atualizar o perfil.", "error");
+    await loadTeamMembers();
+  }
+}
+
+function removeTeamMemberDialog(userId, email) {
+  openDialog("Remover acesso à loja?", `${email || "Esta pessoa"} perderá imediatamente o acesso aos dados da loja. A conta de login continuará existindo.`, `<div class="dialog-actions"><button class="button button-secondary" type="button" data-action="close-dialog">Manter acesso</button><button class="button button-danger" type="button" data-action="confirm-remove-team-member" data-id="${escapeHTML(userId)}">Remover acesso</button></div>`);
+}
+
+async function removeTeamMember(userId, button) {
+  button.disabled = true;
+  try {
+    await cloudStore.manageTeam("remove", { storeId: state.storeId, userId });
+    closeDialog();
+    showToast("Acesso à loja removido.");
+    settingsDialog();
+  } catch (error) {
+    console.error("Não foi possível remover o acesso à loja.", error);
+    showToast(error.message || "Não foi possível remover o acesso.", "error");
+    button.disabled = false;
+  }
+}
+
+async function resendTeamInvite(userId, button) {
+  button.disabled = true;
+  try {
+    await cloudStore.manageTeam("resend-invite", { storeId: state.storeId, userId });
+    showToast("Convite reenviado.");
+  } catch (error) {
+    console.error("Não foi possível reenviar o convite da equipe.", error);
+    showToast(error.message || "Não foi possível reenviar o convite.", "error");
   } finally {
     button.disabled = false;
   }
@@ -1642,6 +1737,10 @@ document.addEventListener("click", async event => {
     const entry = state.cashEntries?.find(item => item.id === id);
     if (entry && !entry.settledAt) deleteCashEntryDialog(entry);
   } else if (action === "confirm-delete-cash-entry" && canManageCashFlow()) await deleteCashEntry(id);
+  else if (action === "reload-team") loadTeamMembers();
+  else if (action === "resend-team-invite" && ["owner", "admin"].includes(state?.role)) await resendTeamInvite(id, actionButton);
+  else if (action === "remove-team-member" && ["owner", "admin"].includes(state?.role)) removeTeamMemberDialog(id, actionButton.dataset.email);
+  else if (action === "confirm-remove-team-member" && ["owner", "admin"].includes(state?.role)) await removeTeamMember(id, actionButton);
   else if (action === "open-kyte-import") kyteImportDialog();
   else if (action === "back-kyte-import") kyteImportDialog();
   else if (action === "confirm-kyte-import") executeKyteImport(actionButton);
@@ -1828,7 +1927,9 @@ document.addEventListener("input", event => {
 });
 
 document.addEventListener("change", event => {
-  if (event.target.id === "product-image") {
+  if (event.target.matches("[data-team-role]")) {
+    updateTeamMemberRole(event.target.dataset.teamRole, event.target.value, event.target);
+  } else if (event.target.id === "product-image") {
     const file = event.target.files?.[0];
     if (file && (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024)) {
       event.target.value = "";

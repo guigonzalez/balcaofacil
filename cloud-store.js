@@ -150,6 +150,7 @@ export function createCloudStore(url, anonKey) {
       importSource: sale.import_source ?? "",
       importReference: sale.import_reference ?? "",
       importDetails: sale.import_details ?? "",
+      observation: sale.observation ?? "",
       importItemCount: sale.import_item_count ?? null,
       importProfitCents: sale.import_profit_cents === null || sale.import_profit_cents === undefined
         ? null
@@ -188,6 +189,23 @@ export function createCloudStore(url, anonKey) {
       .eq("store_id", storeId)
       .order("due_date"));
     return rows.map(mapCashEntry);
+  }
+
+  async function manageTeam(action, values = {}) {
+    const { data, error } = await client.auth.getSession();
+    if (error) throw error;
+    if (!data.session) throw new Error("Sua sessão expirou. Entre novamente para gerir a equipe.");
+    const response = await fetch("/api/team", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${data.session.access_token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ action, store_id: values.storeId, user_id: values.userId, role: values.role })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(result.error || "Não foi possível concluir a operação da equipe.");
+    return result;
   }
 
   async function loadForUser(user) {
@@ -421,7 +439,8 @@ export function createCloudStore(url, anonKey) {
             quantity: item.quantity
           })),
           requested_discount_type: sale.discountType ?? "none",
-          requested_discount_value: sale.discountValue ?? 0
+          requested_discount_value: sale.discountValue ?? 0,
+          requested_observation: sale.observation ?? ""
         }));
         sale.databaseId = createdSale.id;
         sale.id = `VD-${createdSale.sale_number}`;
@@ -448,5 +467,5 @@ export function createCloudStore(url, anonKey) {
     }
   }
 
-  return { client, loadForUser, createStore, loadStore, loadCashEntries, saveChanges, importKyteProducts, importKyteSales };
+  return { client, loadForUser, createStore, loadStore, loadCashEntries, manageTeam, saveChanges, importKyteProducts, importKyteSales };
 }
