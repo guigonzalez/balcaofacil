@@ -2,6 +2,28 @@ function localDateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+export function salesToCashEntries(sales, customers) {
+  const customerNames = new Map(customers.map(customer => [customer.id, customer.name]));
+  return sales
+    .filter(sale => sale.status === "completed" && Number.isSafeInteger(Number(sale.total)) && Number(sale.total) > 0)
+    .flatMap(sale => {
+      const settledDate = new Date(sale.date);
+      if (Number.isNaN(settledDate.getTime())) return [];
+      return [{
+        id: `sale:${sale.id}`,
+        source: "sale",
+        direction: "receivable",
+        description: `Venda ${sale.id}`,
+        counterparty: customerNames.get(sale.customerId) ?? sale.customerName ?? "",
+        category: "Venda",
+        amountCents: Number(sale.total),
+        dueDate: localDateKey(settledDate),
+        paymentMethod: sale.payment ?? "",
+        settledAt: sale.date
+      }];
+    });
+}
+
 export function cashEntryStatus(entry, now = new Date()) {
   if (entry.settledAt) return "settled";
   return entry.dueDate < localDateKey(now) ? "overdue" : "open";

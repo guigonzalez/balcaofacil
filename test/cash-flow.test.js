@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { cashEntryStatus, summarizeCashFlow } from "../cash-flow.js";
+import { cashEntryStatus, salesToCashEntries, summarizeCashFlow } from "../cash-flow.js";
 
 const now = new Date(2026, 9, 15, 12);
 
@@ -41,4 +41,73 @@ test("returns zeroed totals for an empty cash flow", () => {
     projectedBalanceCents: 0,
     settledBalanceThisMonthCents: 0
   });
+});
+
+test("includes completed sales as settled cash receipts and excludes cancelled sales", () => {
+  const entries = salesToCashEntries([
+    {
+      id: "VD-1",
+      date: "2026-10-12T15:30:00",
+      customerId: "customer-1",
+      payment: "Pix",
+      status: "completed",
+      total: 12500
+    },
+    {
+      id: "KY-2",
+      date: "2026-10-13T15:30:00",
+      customerId: "",
+      customerName: "Cliente importado",
+      payment: "Dinheiro",
+      status: "completed",
+      total: 5000
+    },
+    {
+      id: "VD-3",
+      date: "2026-10-14T15:30:00",
+      customerId: "customer-1",
+      payment: "Pix",
+      status: "cancelled",
+      total: 8000
+    }
+  ], [{ id: "customer-1", name: "Marina Costa" }]);
+
+  assert.deepEqual(entries, [
+    {
+      id: "sale:VD-1",
+      source: "sale",
+      direction: "receivable",
+      description: "Venda VD-1",
+      counterparty: "Marina Costa",
+      category: "Venda",
+      amountCents: 12500,
+      dueDate: "2026-10-12",
+      paymentMethod: "Pix",
+      settledAt: "2026-10-12T15:30:00"
+    },
+    {
+      id: "sale:KY-2",
+      source: "sale",
+      direction: "receivable",
+      description: "Venda KY-2",
+      counterparty: "Cliente importado",
+      category: "Venda",
+      amountCents: 5000,
+      dueDate: "2026-10-13",
+      paymentMethod: "Dinheiro",
+      settledAt: "2026-10-13T15:30:00"
+    }
+  ]);
+
+  const summary = summarizeCashFlow(entries, now);
+  assert.equal(summary.settledReceivablesThisMonthCents, 17500);
+  assert.equal(summary.openReceivablesCents, 0);
+});
+
+test("ignores sales without a valid date or a positive integer amount", () => {
+  assert.deepEqual(salesToCashEntries([
+    { id: "invalid-date", date: "not a date", status: "completed", total: 1000 },
+    { id: "zero-total", date: "2026-10-12T15:30:00", status: "completed", total: 0 },
+    { id: "fractional-total", date: "2026-10-12T15:30:00", status: "completed", total: 100.5 }
+  ], []), []);
 });

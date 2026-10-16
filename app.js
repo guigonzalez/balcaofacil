@@ -1,5 +1,5 @@
 import { createCloudStore } from "./cloud-store.js";
-import { cashEntryStatus, summarizeCashFlow } from "./cash-flow.js";
+import { cashEntryStatus, salesToCashEntries, summarizeCashFlow } from "./cash-flow.js";
 import { parseKyteProductsCsv, parseKyteSalesCsv } from "./kyte-import.js";
 import { calculateSalesAnalytics, estimatePaymentFeeCents } from "./sales-analytics.js";
 import { calculateDiscountCents } from "./sale-discount.js";
@@ -127,7 +127,7 @@ let salesPeriod = "all";
 let productFilter = "active";
 let analyticsPeriod = 30;
 let cashFlowView = "overview";
-let cashFlowFilter = "open";
+let cashFlowFilter = "all";
 let toastTimer;
 let productPreviewUrl = "";
 let cloudStore = null;
@@ -623,7 +623,10 @@ function cashEntryDueDate(value) {
 }
 
 function renderCashFlow() {
-  const entries = state.cashEntries ?? [];
+  const entries = [
+    ...(state.cashEntries ?? []),
+    ...salesToCashEntries(state.sales, state.customers)
+  ];
   const summary = summarizeCashFlow(entries);
   const viewEntries = entries.filter(entry =>
     cashFlowView === "overview" ||
@@ -637,11 +640,11 @@ function renderCashFlow() {
   const rows = filtered.map(entry => {
     const status = cashEntryStatus(entry);
     const statusLabel = status === "settled" ? "Quitada" : status === "overdue" ? "Vencida" : "Em aberto";
-    const directionLabel = entry.direction === "payable" ? "A pagar" : "A receber";
+    const directionLabel = entry.direction === "payable" ? "A pagar" : status === "settled" ? "Recebido" : "A receber";
     const partyLabel = entry.counterparty ? escapeHTML(entry.counterparty) : "—";
     const paymentLabel = entry.paymentMethod ? escapeHTML(entry.paymentMethod) : "—";
     const actions = status === "settled"
-      ? `<span class="cashflow-settled-date">Quitada em ${escapeHTML(formatDate(entry.settledAt))}</span>`
+      ? `<span class="cashflow-settled-date">${entry.source === "sale" ? "Recebido" : "Quitada"} em ${escapeHTML(formatDate(entry.settledAt))}</span>`
       : `<div class="row-actions"><button class="table-action" type="button" data-action="settle-cash-entry" data-id="${escapeHTML(entry.id)}">Dar baixa</button><button class="table-action danger" type="button" data-action="delete-cash-entry" data-id="${escapeHTML(entry.id)}">Apagar</button></div>`;
     return `<tr><td><strong>${escapeHTML(entry.description)}</strong><div class="stock-sku">${escapeHTML(entry.category)}</div></td><td>${directionLabel}</td><td>${partyLabel}</td><td>${escapeHTML(cashEntryDueDate(entry.dueDate))}</td><td>${paymentLabel}</td><td><strong>${money(entry.amountCents)}</strong></td><td><span class="status-pill cashflow-status ${status}">${statusLabel}</span></td><td>${actions}</td></tr>`;
   }).join("");
@@ -668,8 +671,8 @@ function renderCashFlow() {
       <article class="metric-card"><div class="metric-top"><span>Saldo previsto em aberto</span><span class="metric-icon">${iconMarkup("bag")}</span></div><div class="metric-value">${money(summary.projectedBalanceCents)}</div><div class="metric-note">A receber menos a pagar · não é saldo bancário</div></article>
     </div>
     <section class="panel cashflow-month-summary"><div><span>Recebido este mês</span><strong>${money(summary.settledReceivablesThisMonthCents)}</strong></div><div><span>Pago este mês</span><strong>${money(summary.settledPayablesThisMonthCents)}</strong></div><div><span>Movimentação líquida do mês</span><strong>${money(summary.settledBalanceThisMonthCents)}</strong></div></section>
-    <section class="panel cashflow-list-panel"><div class="panel-header"><div><h2 class="panel-title">${title}</h2><p class="panel-subtitle">Lançamentos manuais · baixas integrais</p></div><select class="select-control" id="cashflow-status" aria-label="Filtrar situação"><option value="open"${cashFlowFilter === "open" ? " selected" : ""}>Em aberto</option><option value="overdue"${cashFlowFilter === "overdue" ? " selected" : ""}>Vencidas</option><option value="settled"${cashFlowFilter === "settled" ? " selected" : ""}>Quitadas</option><option value="all"${cashFlowFilter === "all" ? " selected" : ""}>Todas</option></select></div>
-      <div class="table-wrap"><table><thead><tr><th>DESCRIÇÃO / CATEGORIA</th><th>TIPO</th><th>PESSOA / EMPRESA</th><th>VENCIMENTO</th><th>FORMA</th><th>VALOR</th><th>SITUAÇÃO</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="8"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>${cashFlowFilter === "open" ? "Nenhuma conta em aberto" : "Nenhum lançamento encontrado"}</strong><p>Cadastre contas a pagar e receber para organizar o fluxo da loja.</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "lançamento exibido" : "lançamentos exibidos"}</div></section>`;
+    <section class="panel cashflow-list-panel"><div class="panel-header"><div><h2 class="panel-title">${title}</h2><p class="panel-subtitle">Recebimentos de vendas concluídas e lançamentos manuais</p></div><select class="select-control" id="cashflow-status" aria-label="Filtrar situação"><option value="open"${cashFlowFilter === "open" ? " selected" : ""}>Em aberto</option><option value="overdue"${cashFlowFilter === "overdue" ? " selected" : ""}>Vencidas</option><option value="settled"${cashFlowFilter === "settled" ? " selected" : ""}>Quitadas</option><option value="all"${cashFlowFilter === "all" ? " selected" : ""}>Todas</option></select></div>
+      <div class="table-wrap"><table><thead><tr><th>DESCRIÇÃO / CATEGORIA</th><th>TIPO</th><th>PESSOA / EMPRESA</th><th>VENCIMENTO</th><th>FORMA</th><th>VALOR</th><th>SITUAÇÃO</th><th></th></tr></thead><tbody>${rows || `<tr><td colspan="8"><div class="empty-state"><div><span class="empty-symbol">↗</span><strong>${cashFlowFilter === "open" ? "Nenhuma conta em aberto" : "Nenhum lançamento encontrado"}</strong><p>${cashFlowFilter === "open" ? "Cadastre contas a pagar e receber para organizar o fluxo da loja." : "Vendas concluídas e lançamentos manuais aparecem aqui."}</p></div></div></td></tr>`}</tbody></table></div><div class="list-count">${filtered.length} ${filtered.length === 1 ? "lançamento exibido" : "lançamentos exibidos"}</div></section>`;
 }
 
 function customerStats(customer) {
